@@ -50,6 +50,7 @@ a { color:inherit; text-decoration:none } a:hover { color:var(--accent-ink); tex
 .top h1 span { color:var(--muted); font-weight:500 }
 .top .spacer { flex:1 }
 .status { font-size:12px; color:var(--muted); display:inline-flex; align-items:center; gap:8px } .status.err { color:var(--bad) }
+.feed { font-size:12px; color:var(--muted); display:inline-flex; align-items:center; gap:6px } .feed::before { content:""; width:8px; height:8px; border-radius:50%; background:var(--rule) } .feed.live::before { background:var(--good) } .feed.err::before { background:var(--bad) } .feed.connecting::before, .feed.reconnecting::before, .feed.waiting::before { background:var(--accent) }
 .status.busy::before { content:""; width:12px; height:12px; border-radius:50%; border:2px solid var(--rule); border-top-color:var(--accent); animation:spin .8s linear infinite }
 @keyframes spin { to { transform:rotate(360deg) } }
 .hdrcounts { display:flex; gap:18px; font-size:13px; color:var(--ink2) }
@@ -243,6 +244,7 @@ table { table-layout:fixed } th:first-child, td:first-child { width:auto } td.nu
     <div class="hdrcounts" id="hdrCounts"><span class="sk" style="width:120px">&nbsp;</span><span class="sk" style="width:120px">&nbsp;</span></div>
     <div class="spacer"></div>
     <span id="status" class="status busy">Loading</span>
+    <span id="feed" class="feed" hidden>Live</span>
     <div class="segs" id="theme"><button data-t="dark" aria-pressed="true">Dark</button><button data-t="light">Light</button></div>
     <button id="refresh">Refresh</button>
     <button id="signout" style="display:none">Sign out</button>
@@ -582,6 +584,19 @@ async function start() {
   loadLive(); loadDaily();
   setInterval(loadLive, 2 * 60 * 1000);
   setInterval(() => loadDaily(false), 5 * 60 * 1000);
+  followEvents();
+}
+const FEED_LABEL = { live: "Live", connecting: "Connecting", reconnecting: "Reconnecting", waiting: "Waiting", error: "Feed down", off: "" };
+function showFeed(st) {
+  const el = $("#feed"); el.hidden = st.state === "off";
+  el.textContent = FEED_LABEL[st.state] || st.state; el.className = "feed " + (st.state === "error" ? "err" : st.state);
+  el.title = st.state === "live" ? "Cadence webhook feed connected: activity refreshes as GitHub events arrive" : st.detail || "";
+}
+let refreshTimer = null;
+function followEvents() {
+  const es = new EventSource("/api/events");
+  es.addEventListener("feed", (e) => showFeed(JSON.parse(e.data)));
+  es.addEventListener("refresh", () => { clearTimeout(refreshTimer); refreshTimer = setTimeout(() => { loadLive(); loadDaily(false); }, 1500); });
 }
 $("#deviceStart").onclick = async () => {
   try {

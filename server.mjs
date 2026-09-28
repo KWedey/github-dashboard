@@ -5,6 +5,7 @@ import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { demoDaily, demoLive, demoRepos } from "./demo.mjs";
+import { DEFAULT_FEED_URL, startCadenceFeed } from "./cadence-feed.mjs";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 4747);
@@ -15,6 +16,8 @@ const SESSIONS_FILE = path.join(CACHE_DIR, "sessions.json");
 const API = "https://api.github.com";
 const WARM_DAYS = 90;
 const DEMO = process.env.DEMO === "1";
+const CADENCE_FEED_KEY = process.env.CADENCE_FEED_KEY || "";
+const CADENCE_FEED_URL = process.env.CADENCE_FEED_URL || DEFAULT_FEED_URL;
 fs.mkdirSync(CACHE_DIR, { recursive: true });
 
 // ---------- owner token from gh ----------
@@ -248,6 +251,31 @@ function localRepos() {
   return localRepoCache.list;
 }
 
+// ---------- browser event stream + Cadence webhook feed ----------
+const browserStreams = new Set();
+let feedStatus = { state: "off", detail: DEMO ? "demo mode" : "CADENCE_FEED_KEY not set" };
+function sseFrame(event, data) { return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`; }
+function broadcast(event, data, logins) {
+  for (const s of browserStreams) if (!logins || logins.has(s.login.toLowerCase())) s.res.write(sseFrame(event, data));
+}
+function openBrowserStream(req, res, login) {
+  res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache, no-store, no-transform", Connection: "keep-alive", "X-Accel-Buffering": "no" });
+  res.write(sseFrame("feed", feedStatus));
+  const entry = { res, login };
+  browserStreams.add(entry);
+  const ping = setInterval(() => res.write(": ping\n\n"), 25 * 1000);
+  req.on("close", () => { clearInterval(ping); browserStreams.delete(entry); });
+}
+function invalidate(logins, reason) {
+  const t = today(), y = shift(t, -1);
+  for (const c of clients.values()) {
+    if (!c.login || (logins && !logins.has(c.login.toLowerCase()))) continue;
+    for (const metric of Object.keys(METRICS)) for (const d of [t, y]) freshness.delete(`${c.login}:${metric}:${d}`);
+  }
+  broadcast("refresh", { reason, at: new Date().toISOString() }, logins);
+}
+if (!DEMO) startCadenceFeed({ key: CADENCE_FEED_KEY, url: CADENCE_FEED_URL, onInvalidate: invalidate, onStatus: (st) => { feedStatus = st; console.log(`cadence feed: ${st.state}${st.detail ? ` (${st.detail})` : ""}`); broadcast("feed", st); } });
+
 // ---------- background warm for every known token ----------
 let warming = false;
 async function warm() {
@@ -274,6 +302,7 @@ const server = http.createServer(async (req, res) => {
       if (url.pathname === "/api/auth/status" || url.pathname === "/api/me") return send(res, 200, { loggedIn: true, login: "octocat", owner: true, deviceFlow: false });
       if (url.pathname === "/api/live") return send(res, 200, demoLive(today()));
       if (url.pathname === "/api/repos") return send(res, 200, { repos: demoRepos });
+      if (url.pathname === "/api/events") return openBrowserStream(req, res, "octocat");
       if (url.pathname === "/api/daily") {
         const to = url.searchParams.get("to") || today(), from = url.searchParams.get("from") || to, days = daysBetween(from, to);
         return send(res, 200, { user: "octocat", from, to, today: today(), days, metrics: demoDaily(days, today()) });
@@ -312,6 +341,7 @@ const server = http.createServer(async (req, res) => {
       if (!s) return send(res, 401, { error: "Sign in with GitHub first" });
       const c = client(s.token);
       if (url.pathname === "/api/live") return send(res, 200, await liveData(c));
+      if (url.pathname === "/api/events") return openBrowserStream(req, res, await c.me());
       if (url.pathname === "/api/me") return send(res, 200, { login: await c.me(), owner: Boolean(s.owner) });
       if (url.pathname === "/api/repos") return send(res, 200, { repos: s.owner ? localRepos() : [] });
       if (url.pathname === "/api/daily") {
