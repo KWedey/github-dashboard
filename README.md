@@ -40,7 +40,7 @@ The feed is an invalidation signal, never the source of truth: a delivery naming
 
 - Assigned issues: `assignee:me is:issue is:open`. In-flight = has an open linked PR.
 - My open PRs: `author:me is:pr is:open`. In review = not draft.
-- Needs code review / Needs testing: open PRs labelled `Needs Code Review` / `Needs Testing` in your repos and every org you belong to, oldest update first. Mine = authored by me.
+- Needs code review / Needs testing: open PRs labelled `Needs Code Review` / `Needs Testing` in your repos and every org you belong to, oldest update first. For me = I am a requested reviewer (directly or via a team) or an assignee; Mine = authored by me.
 - Waiting on my review: `review-requested:me is:pr is:open`.
 - Issues opened: created by me that day. Issues closed: assigned to me, closed that day.
 - PRs opened / merged: authored by me.

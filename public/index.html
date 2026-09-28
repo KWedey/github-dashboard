@@ -279,13 +279,13 @@ table { table-layout:fixed } th:first-child, td:first-child { width:auto } td.nu
     <section id="codeReview">
       <header><h2>Needs code review</h2><span id="crCount" hidden>–</span><span class="sub" id="crSub"></span>
         <label class="win-only"><input type="checkbox" id="crWin"> Only selected window</label></header>
-      <div class="segs list-filter" id="crFilter"><button data-f="all">All</button><button data-f="others">Others'</button><button data-f="mine">Mine</button></div>
+      <div class="segs list-filter" id="crFilter"><button data-f="forMe">For me</button><button data-f="all">All</button><button data-f="mine">Mine</button></div>
       <div id="crList" class="scroll"></div>
     </section>
     <section id="testing">
       <header><h2>Needs testing</h2><span id="qaCount" hidden>–</span><span class="sub" id="qaSub"></span>
         <label class="win-only"><input type="checkbox" id="qaWin"> Only selected window</label></header>
-      <div class="segs list-filter" id="qaFilter"><button data-f="all">All</button><button data-f="others">Others'</button><button data-f="mine">Mine</button></div>
+      <div class="segs list-filter" id="qaFilter"><button data-f="forMe">For me</button><button data-f="all">All</button><button data-f="mine">Mine</button></div>
       <div id="qaList" class="scroll"></div>
     </section>
   </div>
@@ -344,7 +344,8 @@ let winOnly = { issues: false, prs: false, codeReview: false, testing: false, ..
 let workWeek = store.get("workWeek", false);
 $("#workWeek").checked = workWeek;
 const isWorkDay = (k) => { const [y,m,d] = k.split("-").map(Number); const dow = new Date(y, m-1, d).getDay(); return dow >= 1 && dow <= 4; };
-let listFilter = { issues: "open", prs: "all", codeReview: "all", testing: "all", ...store.get("listFilter", {}) };
+let listFilter = { issues: "open", prs: "all", codeReview: "forMe", testing: "forMe", ...store.get("listFilter", {}) };
+for (const k of ["codeReview", "testing"]) if (listFilter[k] === "others") listFilter[k] = "forMe";
 if (listFilter.issues === "all") listFilter.issues = "open";
 const HIST_DAYS = 30;
 let chartH = store.get("chartH", 280);
@@ -446,7 +447,8 @@ function renderLive() {
   document.querySelectorAll("#prFilter button").forEach((b) => { b.setAttribute("aria-pressed", b.dataset.f === listFilter.prs); b.textContent = `${{all:"All",open:"Open",merged:"Merged"}[b.dataset.f]} ${prSets[b.dataset.f].length}`; });
   const allIssues = live.issues.filter((i) => visible(i.repo)), allPrs = live.prs.filter((p) => visible(p.repo));
   const allCr = live.needsCodeReview.filter((p) => visible(p.repo)), allQa = live.needsTesting.filter((p) => visible(p.repo));
-  $("#hdrCounts").innerHTML = `<a href="#issues"><b>${allIssues.length}</b>issues, ${allIssues.filter(inflightIssue).length} in flight</a><a href="#prs"><b>${allPrs.length}</b>PRs, ${allPrs.filter((p) => !p.draft).length} in review</a><a href="#codeReview"><b>${allCr.length}</b>need code review</a><a href="#testing"><b>${allQa.length}</b>need testing</a>`;
+  const requested = new Set(live.reviewRequests.map(itemKey)), askedOfMe = (p) => requested.has(itemKey(p)) || p.assignees.includes(live.user);
+  $("#hdrCounts").innerHTML = `<a href="#issues"><b>${allIssues.length}</b>issues, ${allIssues.filter(inflightIssue).length} in flight</a><a href="#prs"><b>${allPrs.length}</b>PRs, ${allPrs.filter((p) => !p.draft).length} in review</a><a href="#codeReview"><b>${allCr.filter(askedOfMe).length}</b>for me to review, ${allCr.length} queued</a><a href="#testing"><b>${allQa.filter(askedOfMe).length}</b>for me to test, ${allQa.length} queued</a>`;
   $("#issueCount").textContent = issueSets[listFilter.issues].length; $("#prCount").textContent = prSets[listFilter.prs].length;
   if (!daily) $("#status").textContent = "Loading activity";
   const prs = prSets[listFilter.prs];
@@ -461,13 +463,15 @@ function renderLive() {
 }
 function renderQueue(all, key, id, label, verb, win, winLabel) {
   const rows = all.filter((p) => visible(p.repo) && (!winOnly[key] || inWindow(p.updated_at, win))).sort((a,b) => a.updated_at.localeCompare(b.updated_at));
-  const sets = { all: rows, others: rows.filter((p) => p.author !== live.user), mine: rows.filter((p) => p.author === live.user) };
-  const oldest = rows.length ? ago(rows[0].updated_at) : null;
-  $(`#${id}Sub`).textContent = winOnly[key] ? `${winLabel}: queued PRs updated in window, oldest first` : `${sets.others.length} by others, ${sets.mine.length} mine${oldest ? `, longest waiting ${oldest}` : ""}`;
-  document.querySelectorAll(`#${id}Filter button`).forEach((b) => { b.setAttribute("aria-pressed", b.dataset.f === listFilter[key]); b.textContent = `${{all:"All",others:"Others'",mine:"Mine"}[b.dataset.f]} ${sets[b.dataset.f].length}`; });
+  const requested = new Set(live.reviewRequests.map(itemKey));
+  const forMe = (p) => requested.has(itemKey(p)) || p.assignees.includes(live.user);
+  const sets = { forMe: rows.filter(forMe), all: rows, mine: rows.filter((p) => p.author === live.user) };
+  const oldest = sets.forMe.length ? ago(sets.forMe[0].updated_at) : null;
+  $(`#${id}Sub`).textContent = winOnly[key] ? `${winLabel}: queued PRs updated in window, oldest first` : `${sets.forMe.length} asked of me${oldest ? `, longest waiting ${oldest}` : ""}, ${sets.mine.length} mine, ${rows.length} in the queue`;
+  document.querySelectorAll(`#${id}Filter button`).forEach((b) => { b.setAttribute("aria-pressed", b.dataset.f === listFilter[key]); b.textContent = `${{forMe:"For me",all:"All",mine:"Mine"}[b.dataset.f]} ${sets[b.dataset.f].length}`; });
   const shown = sets[listFilter[key]];
   $(`#${id}Count`).textContent = shown.length;
-  $(`#${id}List`).innerHTML = shown.length ? prTable(shown, { author: true, hideLabel: label }) : `<div class="empty">Nothing waiting to ${verb} in the selected repos.</div>`;
+  $(`#${id}List`).innerHTML = shown.length ? prTable(shown, { author: true, hideLabel: label }) : `<div class="empty">${listFilter[key] === "forMe" ? `Nothing asked of me to ${verb}: no PR in this queue has me as a requested reviewer or assignee.` : `Nothing waiting to ${verb} in the selected repos.`}</div>`;
 }
 const QUEUE_LABELS = new Set(["needs testing", "needs code review"]);
 function prTable(prs, { author = false, hideLabel = null } = {}) {
