@@ -2,9 +2,9 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { demoDaily, demoLive, demoRepos } from "./demo.mjs";
+import { demoDaily, demoLive, demoQuota, demoRepos } from "./demo.mjs";
 import { DEFAULT_FEED_URL, coalesceInvalidations, startCadenceFeed } from "./cadence-feed.mjs";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -253,6 +253,37 @@ async function liveData(c) {
   return { user, fetchedAt: new Date().toISOString(), reviewAuthors: REVIEW_AUTHORS, testers: await testers(c), issues: issues.map(slimIssue), prs: prs.map(slimPr), reviewRequests: reviewRequests.map(slimPr), needsCodeReview: needsCodeReview.map(slimPr), needsTesting: needsTesting.map(slimPr) };
 }
 
+// ---------- Claude quotas from cpa-route (owner only) ----------
+const USAGE_CACHE = (process.env.CPA_USAGE_CACHE || "~/.config/cpa-route/usage-cache.json").replace(/^~/, process.env.HOME);
+const CPA_ROUTE = (process.env.CPA_ROUTE_BIN || "~/.local/bin/cpa-route").replace(/^~/, process.env.HOME);
+const QUOTA_STALE_MS = 15 * 60 * 1000;
+let quotaRefresh = null;
+function refreshQuota() {
+  if (quotaRefresh || !fs.existsSync(CPA_ROUTE)) return;
+  quotaRefresh = new Promise((resolve) => execFile(CPA_ROUTE, ["ranking"], { timeout: 120 * 1000 }, (err) => { if (err) console.error("cpa-route ranking:", err.message); resolve(); }))
+    .finally(() => { quotaRefresh = null; broadcast("quota", { at: new Date().toISOString() }); });
+}
+const window_ = (w) => w && typeof w.utilization === "number" ? { pct: Math.round(w.utilization), resets_at: w.resets_at || null } : null;
+function readQuota() {
+  let raw; try { raw = JSON.parse(fs.readFileSync(USAGE_CACHE, "utf8")); } catch { return null; }
+  const accounts = Object.entries(raw).map(([file, v]) => {
+    const u = v.usage || {};
+    const m = file.match(/^claude-([0-9a-f]+)-(.+?)\.json$/);
+    const fable = (u.limits || []).find((l) => l.kind === "weekly_scoped" && l.scope?.model?.display_name === "Fable");
+    return { file, id: m ? m[1] : file, email: m ? m[2] : file, fetched_at: v.fetched_at || null,
+      five_hour: window_(u.five_hour), seven_day: window_(u.seven_day), fable: fable ? { pct: Math.round(fable.percent), resets_at: fable.resets_at || null } : null };
+  }).filter((a) => a.file.startsWith("claude-"));
+  const fetched = accounts.map((a) => Date.parse(a.fetched_at)).filter(Number.isFinite);
+  const oldest = fetched.length ? Math.min(...fetched) : 0;
+  return { accounts, fetched_at: oldest ? new Date(oldest).toISOString() : null, refreshing: Boolean(quotaRefresh) };
+}
+async function quotaData(force) {
+  const q = readQuota();
+  if (!q) return { available: false };
+  if (force || !q.fetched_at || Date.now() - Date.parse(q.fetched_at) > QUOTA_STALE_MS) { refreshQuota(); q.refreshing = Boolean(quotaRefresh); }
+  return { available: true, ...q };
+}
+
 // ---------- local repos (owner only) ----------
 const SCAN_ROOTS = (process.env.REPO_ROOTS || "~,~/Studio").split(",").map((r) => r.trim().replace(/^~/, process.env.HOME)).filter(Boolean);
 const SKIP = new Set(["node_modules", "Library", ".worktrees", "worktrees", ".git", "Downloads", "Applications", "Movies", "Music", "Pictures", ...(process.env.REPO_SKIP || "Dropbox (Personal),TrainerRoad Dropbox").split(",").map((x) => x.trim()).filter(Boolean)]);
@@ -328,6 +359,7 @@ const server = http.createServer(async (req, res) => {
       if (url.pathname === "/api/auth/status" || url.pathname === "/api/me") return send(res, 200, { loggedIn: true, login: "octocat", owner: true, deviceFlow: false });
       if (url.pathname === "/api/live") return send(res, 200, demoLive(today()));
       if (url.pathname === "/api/repos") return send(res, 200, { repos: demoRepos });
+      if (url.pathname === "/api/quota") return send(res, 200, demoQuota());
       if (url.pathname === "/api/events") return openBrowserStream(req, res, "octocat");
       if (url.pathname === "/api/daily") {
         const to = url.searchParams.get("to") || today(), from = url.searchParams.get("from") || to, days = daysBetween(from, to);
@@ -370,6 +402,7 @@ const server = http.createServer(async (req, res) => {
       if (url.pathname === "/api/events") return openBrowserStream(req, res, await c.me());
       if (url.pathname === "/api/me") return send(res, 200, { login: await c.me(), owner: Boolean(s.owner) });
       if (url.pathname === "/api/repos") return send(res, 200, { repos: s.owner ? localRepos() : [] });
+      if (url.pathname === "/api/quota") return send(res, 200, s.owner ? await quotaData(url.searchParams.get("force") === "1") : { available: false });
       if (url.pathname === "/api/daily") {
         const to = url.searchParams.get("to") || today(), from = url.searchParams.get("from") || to;
         if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) return send(res, 400, { error: "bad range" });
