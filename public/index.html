@@ -90,7 +90,7 @@ section > header .sub { font-size:12.5px; color:var(--muted) }
 .qrow.warn .qbar i { background:var(--warn) } .qrow.bad .qbar i { background:var(--bad) } .qrow.bad .qv { color:var(--bad) } .qrow.warn .qv { color:var(--warn) }
 .qrow .qreset { grid-column:2 / span 2; margin-top:-5px; font-size:11px; color:var(--muted); display:flex; justify-content:space-between; gap:8px } .qrow .qreset b { font-weight:600; color:var(--ink2) }
 .qrow.bad .qreset b { color:var(--bad) }
-.qnote { font-size:12px; color:var(--muted) }
+.qnote { font-size:12px; color:var(--muted) } .qnote b { color:var(--ink) }
 .tiles { display:grid; grid-template-columns:repeat(5, minmax(0,1fr)); gap:10px; margin-bottom:18px }
 @media (max-width:1500px) { .tiles { grid-template-columns:repeat(3, minmax(0,1fr)) } }
 @media (max-width:1000px) { .tiles { grid-template-columns:repeat(2, minmax(0,1fr)) } }
@@ -263,7 +263,7 @@ table { table-layout:fixed } th:first-child, td:first-child { width:auto } td.nu
   </div>
 
   <section id="quota" hidden>
-    <header><h2>Claude quotas</h2><span class="sub" id="quotaSub"></span></header>
+    <header><h2>AI quotas</h2><span class="sub" id="quotaSub"></span></header>
     <div class="qgrid" id="quotaGrid"></div>
   </section>
 
@@ -410,9 +410,11 @@ function renderQuota() {
       a.windows.map((w) => { if (w.pct === null) return `<div class="qrow"><span class="qn">${esc(w.name)}</span><span class="qbar"></span><span class="qv">–</span><span class="qreset">no window reported</span></div>`;
         const cls = w.pct >= 95 ? " bad" : w.pct >= 75 ? " warn" : "", state = w.pct >= 95 ? "Spent" : w.pct >= 75 ? "Warning" : "";
         return `<div class="qrow${cls}"><span class="qn">${esc(w.name)}</span><span class="qbar"><i style="width:${Math.min(100, w.pct)}%"></i></span><span class="qv">${w.pct}%</span>
-          <span class="qreset"><span>${state ? `<b>${state}</b> · ` : ""}${w.resets_at ? `resets in <b>${untilText(w.resets_at)}</b>` : w.pct ? "reset unknown" : "unused"}</span><span>${w.resets_at ? whenText(w.resets_at) : ""}</span></span></div>`; }).join("") + "</div>";
+          <span class="qreset"><span>${state ? `<b>${state}</b> · ` : ""}${w.resets_at ? `resets in <b>${untilText(w.resets_at)}</b>` : w.pct ? "reset unknown" : "unused"}</span><span>${w.resets_at ? whenText(w.resets_at) : ""}</span></span></div>`; }).join("") +
+      (a.resets ? `<div class="qnote">Manual resets: <b>${a.resets.available ?? "?"}</b> available${a.resets.expires_at ? `, first expires ${whenText(a.resets.expires_at)} (${untilText(a.resets.expires_at)})` : ""}</div>` : "") +
+      (a.error ? `<div class="qnote">⚠️ ${esc(a.error)}</div>` : "") + "</div>";
   }).join("");
-  $("#quotaSub").textContent = `${accounts.length} accounts · as of ${quota.fetched_at ? ago(quota.fetched_at) + " ago" : "?"}${quota.refreshing ? " · refreshing" : ""} · via cpa-route`;
+  $("#quotaSub").textContent = `${accounts.length} accounts · as of ${quota.fetched_at ? ago(quota.fetched_at) + " ago" : "?"}${quota.refreshing ? " · refreshing" : ""} · Claude via cpa-route, Codex via chatgpt.com`;
 }
 setInterval(renderQuota, 60 * 1000);
 async function api(path) { const r = await fetch(path); const j = await r.json(); if (!r.ok) throw new Error(j.error || r.statusText); return j; }

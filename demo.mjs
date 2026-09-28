@@ -48,5 +48,5 @@ export function demoQuota() {
   return { available: true, fetched_at: at, refreshing: false, accounts: [
     acct("a1b2c3d4", "octocat@acme.com-team", 73, 86, 67, 2.1, 65), acct("e5f6a7b8", "mona@acme.com", 25, 64, 100, 3.5, 112),
     acct("c9d0e1f2", "hubot@acme.com", 0, 100, 71, 0, 7), acct("13579bdf", "octocat@acme.com", 19, 13, 20, 4, 118),
-    { file: "codex-2468ace0-octocat@acme.com-pro.json", provider: "codex", id: "2468ace0", label: "octocat@acme.com-pro", fetched_at: at, windows: [w("7 day", 15, 150)] } ] };
+    { file: "codex-2468ace0-octocat@acme.com-pro.json", provider: "codex", id: "2468ace0", label: "octocat@acme.com-pro", fetched_at: at, windows: [w("5 hour", 42, 1.5), w("7 day", 15, 150)], resets: { available: 3, expires_at: hours(130) } } ] };
 }

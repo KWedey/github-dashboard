@@ -264,16 +264,6 @@ function refreshQuota() {
     .finally(() => { quotaRefresh = null; broadcast("quota", { at: new Date().toISOString() }); });
 }
 const AUTH_DIR = (process.env.CPA_AUTH_DIR || "~/.cli-proxy-api").replace(/^~/, process.env.HOME);
-const PROXY_BASE = process.env.CPA_URL || "http://localhost:8317";
-const KEYCHAIN_SERVICE = "cliproxyapi-management";
-let managementKey;
-function readManagementKey() {
-  if (managementKey !== undefined) return managementKey;
-  managementKey = process.env.CPA_MANAGEMENT_KEY || "";
-  if (!managementKey) try { managementKey = execFileSync("security", ["find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", process.env.USER, "-w"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 5000 }).trim(); } catch {}
-  if (!managementKey) try { managementKey = fs.readFileSync(path.join(process.env.HOME, ".config/cpa-route/management-key"), "utf8").trim(); } catch {}
-  return managementKey;
-}
 function orgSuffix(file) {
   try {
     const { organization_name: org, email } = JSON.parse(fs.readFileSync(path.join(AUTH_DIR, file), "utf8"));
@@ -291,23 +281,37 @@ function claudeAccounts() {
       windows: [w("5 hour", u.five_hour), w("7 day", u.seven_day), fable ? window_("Fable", fable.percent, fable.resets_at) : { name: "Fable", pct: null, resets_at: null }] };
   });
 }
-async function codexAccounts() {
-  const key = readManagementKey();
-  if (!key) return [];
+const CODEX_UA = "codex-tui/0.149.1 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.149.1)";
+const CODEX_TTL_MS = 5 * 60 * 1000;
+const codexCache = new Map();
+async function codexJson(url, auth) {
+  const r = await fetch(url, { headers: { Authorization: `Bearer ${auth.access_token}`, "ChatGPT-Account-Id": auth.account_id || "", "Content-Type": "application/json", "User-Agent": CODEX_UA } });
+  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  return r.json();
+}
+const codexWindow = (name, w) => w && typeof w.used_percent === "number" ? window_(name, w.used_percent, w.reset_at ? new Date(w.reset_at * 1000).toISOString() : null) : null;
+const secondsName = (sec) => sec % 86400 === 0 ? `${sec / 86400} day` : sec % 3600 === 0 ? `${sec / 3600} hour` : `${Math.round(sec / 60)} min`;
+async function codexAccount(file, force) {
+  const hit = codexCache.get(file);
+  if (hit && !force && Date.now() - hit.at < CODEX_TTL_MS) return hit.data;
+  let auth; try { auth = JSON.parse(fs.readFileSync(path.join(AUTH_DIR, file), "utf8")); } catch { return null; }
+  const m = file.match(/^codex-([0-9a-f]+)-(.+?)(?:-(\w+))?\.json$/);
+  const base = { file, provider: "codex", id: m ? m[1] : file, label: m ? m[2] : auth.email || file, fetched_at: new Date().toISOString(), windows: [], resets: null };
   try {
-    const r = await fetch(`${PROXY_BASE}/v0/management/auth-files`, { headers: { Authorization: `Bearer ${key}` } });
-    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
-    const { files } = await r.json();
-    return files.filter((f) => f.type === "codex").map((f) => {
-      const sig = f.quota?.signals || {}, m = f.name.match(/^codex-([0-9a-f]+)-(.+?)(?:-(\w+))?\.json$/);
-      const win = (prefix, fallback) => { const mins = Number(sig[`X-Codex-${prefix}-Window-Minutes`]); if (!mins) return null;
-        const name = mins % 1440 === 0 ? `${mins / 1440} day` : mins % 60 === 0 ? `${mins / 60} hour` : `${mins} min`;
-        return window_(name || fallback, Number(sig[`X-Codex-${prefix}-Used-Percent`]) || 0, sig[`X-Codex-${prefix}-Reset-At`] ? new Date(Number(sig[`X-Codex-${prefix}-Reset-At`]) * 1000).toISOString() : null); };
-      const windows = [win("Secondary"), win("Primary")].filter(Boolean);
-      return { file: f.name, provider: "codex", id: m ? m[1] : f.name, label: `${m ? m[2] : f.email}${sig["X-Codex-Plan-Type"] ? `-${sig["X-Codex-Plan-Type"]}` : ""}`, fetched_at: f.quota?.observed_at || null,
-        windows: windows.length ? windows : [{ name: "usage", pct: null, resets_at: null }] };
-    });
-  } catch (e) { console.error("codex quota:", e.message); return []; }
+    const [usage, credits] = await Promise.all([codexJson("https://chatgpt.com/backend-api/wham/usage", auth), codexJson("https://chatgpt.com/backend-api/wham/rate-limit-reset-credits", auth).catch(() => null)]);
+    const rl = usage.rate_limit || {};
+    base.label += usage.plan_type ? `-${usage.plan_type}` : "";
+    base.windows = [codexWindow(rl.secondary_window ? secondsName(rl.secondary_window.limit_window_seconds) : "5 hour", rl.secondary_window), codexWindow(rl.primary_window ? secondsName(rl.primary_window.limit_window_seconds) : "7 day", rl.primary_window)].filter(Boolean);
+    for (const extra of usage.additional_rate_limits || []) { const w = codexWindow(`${extra.limit_name} ${secondsName(extra.rate_limit?.primary_window?.limit_window_seconds || 0)}`, extra.rate_limit?.primary_window); if (w) base.windows.push(w); }
+    const available = (credits?.credits || []).filter((c) => c.status === "available");
+    base.resets = { available: credits ? available.length : usage.rate_limit_reset_credits?.available_count ?? null, expires_at: available.map((c) => c.expires_at).filter(Boolean).sort()[0] || null };
+  } catch (e) { console.error(`codex quota for ${file}:`, e.message); base.error = e.message; }
+  codexCache.set(file, { at: Date.now(), data: base });
+  return base;
+}
+async function codexAccounts(force) {
+  let files; try { files = fs.readdirSync(AUTH_DIR).filter((f) => f.startsWith("codex-") && f.endsWith(".json")); } catch { return []; }
+  return (await Promise.all(files.map((f) => codexAccount(f, force)))).filter(Boolean);
 }
 async function quotaData(force) {
   const claude = claudeAccounts();
@@ -315,7 +319,7 @@ async function quotaData(force) {
   const fetched = claude.map((a) => Date.parse(a.fetched_at)).filter(Number.isFinite);
   const oldest = fetched.length ? Math.min(...fetched) : 0;
   if (force || !oldest || Date.now() - oldest > QUOTA_STALE_MS) refreshQuota();
-  return { available: true, fetched_at: oldest ? new Date(oldest).toISOString() : null, refreshing: Boolean(quotaRefresh), accounts: [...claude, ...(await codexAccounts())] };
+  return { available: true, fetched_at: oldest ? new Date(oldest).toISOString() : null, refreshing: Boolean(quotaRefresh), accounts: [...claude, ...(await codexAccounts(force))] };
 }
 
 // ---------- local repos (owner only) ----------
