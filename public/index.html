@@ -438,13 +438,15 @@ function renderLive() {
   $("#rrSummary").textContent = `Waiting on my review (${rr.length})`;
   $("#rrList").innerHTML = rr.length ? prTable(rr) : `<div class="empty">No review requests.</div>`;
 }
+const QUEUE_LABELS = new Set(["needs testing", "needs code review"]);
 function prTable(prs) {
   return `<table><thead><tr><th>Pull request</th><th>Status</th><th class="num lines">Lines</th><th class="num">Updated</th></tr></thead><tbody>` +
     prs.map((p) => {
       if (p.merged_at) return `<tr><td><div class="item"><span class="repo">${esc(p.repo)} #${p.number}</span><a class="title" href="${p.url}" target="_blank">${esc(p.title)}</a></div></td><td><span class="pill good">Merged</span></td><td class="num when lines"></td><td class="num when">${ago(p.merged_at)}</td></tr>`;
       const [t, c] = prPhase(p);
+      const queue = (p.labels || []).filter((l) => QUEUE_LABELS.has(l.name.toLowerCase())).map((l) => `<span class="pill warn">${esc(l.name)}</span>`).join("");
       return `<tr><td><div class="item"><span class="repo">${esc(p.repo)} #${p.number} — ${esc(p.head)}</span><a class="title" href="${p.url}" target="_blank">${esc(p.title)}</a></div></td>
-      <td><span class="${c}">${t}</span>${p.mergeable === "CONFLICTING" ? `<span class="pill bad">Conflicts</span>` : ""}${p.closes.map((i) => `<a class="pill" href="${i.url}" target="_blank">Closes #${i.number}</a>`).join("")}${p.reviewers.map((r) => `<span class="pill">${esc(r)}</span>`).join("")}</td>
+      <td><span class="${c}">${t}</span>${queue}${p.mergeable === "CONFLICTING" ? `<span class="pill bad">Conflicts</span>` : ""}${p.closes.map((i) => `<a class="pill" href="${i.url}" target="_blank">Closes #${i.number}</a>`).join("")}${p.reviewers.map((r) => `<span class="pill">${esc(r)}</span>`).join("")}</td>
       <td class="num when lines">+${p.additions} −${p.deletions}</td><td class="num when">${ago(p.updated_at)}</td></tr>`; }).join("") + "</tbody></table>";
 }
 function countIn(metric, from, to) {

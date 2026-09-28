@@ -97,3 +97,17 @@ export function startCadenceFeed({ key, url = DEFAULT_FEED_URL, onInvalidate, on
   run();
   return { stop() { stopped = true; controller?.abort(new Error("stopped")); onStatus({ state: "off", detail: "stopped" }); } };
 }
+
+export function coalesceInvalidations(invalidate, minGapMs = 30_000, now = Date.now, schedule = setTimeout) {
+  const last = new Map(), pending = new Map();
+  const fire = (login, reason) => { last.set(login, now()); pending.delete(login); invalidate(login === "*" ? null : new Set([login]), reason); };
+  return (logins, reason) => {
+    if (!logins) { fire("*", reason); return; }
+    for (const login of logins) {
+      if (pending.has(login)) continue;
+      const wait = last.has(login) ? last.get(login) + minGapMs - now() : 0;
+      if (wait <= 0) fire(login, reason);
+      else pending.set(login, schedule(() => fire(login, reason), wait));
+    }
+  };
+}

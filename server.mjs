@@ -5,7 +5,7 @@ import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { demoDaily, demoLive, demoRepos } from "./demo.mjs";
-import { DEFAULT_FEED_URL, startCadenceFeed } from "./cadence-feed.mjs";
+import { DEFAULT_FEED_URL, coalesceInvalidations, startCadenceFeed } from "./cadence-feed.mjs";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 4747);
@@ -206,7 +206,7 @@ async function searchAll(c, q, fragment) {
 const ISSUE_FRAG = `... on Issue { number title url createdAt updatedAt bodyText comments{ totalCount } repository{ nameWithOwner } labels(first:10){ nodes{ name color } } milestone{ title }
   linkedPrs: closedByPullRequestsReferences(first:10, includeClosedPrs:false){ nodes{ number url isDraft state repository{ nameWithOwner } } } }`;
 const PR_FRAG = `... on PullRequest { number title url createdAt updatedAt isDraft reviewDecision mergeable headRefName baseRefName additions deletions repository{ nameWithOwner }
-  labels(first:10){ nodes{ name color } } statusCheckRollup{ state } closingIssuesReferences(first:5){ nodes{ number title url } }
+  labels(first:30){ nodes{ name color } } statusCheckRollup{ state } closingIssuesReferences(first:5){ nodes{ number title url } }
   reviewRequests(first:5){ nodes{ requestedReviewer{ ... on User{ login } ... on Team{ name } } } } }`;
 function firstLine(text) {
   const line = (text || "").split("\n").map((l) => l.trim()).find((l) => l.length > 20 && !/^#|^\*\*|^[-*] |^\[/.test(l)) || "";
@@ -274,7 +274,7 @@ function invalidate(logins, reason) {
   }
   broadcast("refresh", { reason, at: new Date().toISOString() }, logins);
 }
-if (!DEMO) startCadenceFeed({ key: CADENCE_FEED_KEY, url: CADENCE_FEED_URL, onInvalidate: invalidate, onStatus: (st) => { feedStatus = st; console.log(`cadence feed: ${st.state}${st.detail ? ` (${st.detail})` : ""}`); broadcast("feed", st); } });
+if (!DEMO) startCadenceFeed({ key: CADENCE_FEED_KEY, url: CADENCE_FEED_URL, onInvalidate: coalesceInvalidations(invalidate), onStatus: (st) => { feedStatus = st; console.log(`cadence feed: ${st.state}${st.detail ? ` (${st.detail})` : ""}`); broadcast("feed", st); } });
 
 // ---------- background warm for every known token ----------
 let warming = false;

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseSse, touchedLogins, startCadenceFeed } from "../cadence-feed.mjs";
+import { parseSse, touchedLogins, startCadenceFeed, coalesceInvalidations } from "../cadence-feed.mjs";
 
 const enc = new TextEncoder();
 async function* chunks(...parts) { for (const p of parts) yield enc.encode(p); }
@@ -114,4 +114,19 @@ test("feed refuses to follow a redirect so the key never reaches another host", 
   assert.equal(opened, 1);
   assert.equal(statuses.at(-1).state, "error");
   assert.match(statuses.at(-1).detail, /redirect/);
+});
+
+test("coalesceInvalidations fires once per login per gap, trailing edge, and passes reconnects straight through", () => {
+  let t = 0; const calls = [], timers = [];
+  const fn = coalesceInvalidations((logins, reason) => calls.push([logins ? [...logins] : null, reason]), 30_000, () => t, (cb, ms) => { timers.push({ cb, at: t + ms }); return timers.length; });
+  fn(new Set(["kyle"]), "issues");
+  t = 5_000; fn(new Set(["kyle", "sam"]), "pull_request");
+  t = 10_000; fn(new Set(["kyle"]), "pull_request_review");
+  fn(null, "connected");
+  assert.deepEqual(calls, [[["kyle"], "issues"], [["sam"], "pull_request"], [null, "connected"]]);
+  assert.deepEqual(timers.map((x) => x.at), [30_000]);
+  t = 30_000; timers[0].cb();
+  assert.deepEqual(calls.at(-1), [["kyle"], "pull_request"]);
+  fn(new Set(["kyle"]), "issues");
+  assert.equal(calls.length, 4, "a delivery right after the trailing fire waits for the next gap");
 });
