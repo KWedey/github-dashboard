@@ -101,3 +101,17 @@ test("no key means the feed is off and nothing is fetched", () => {
   assert.equal(fetched, false);
   assert.deepEqual(statuses, [{ state: "off", detail: "CADENCE_FEED_KEY not set" }]);
 });
+
+test("feed refuses to follow a redirect so the key never reaches another host", async () => {
+  let opened = 0; const statuses = []; let init;
+  startCadenceFeed({
+    key: "cdnf.x.y", log: { error() {} }, onInvalidate() {}, onStatus: (s) => statuses.push(s),
+    fetchImpl: async (_url, i) => { opened++; init = i; return { status: 302, ok: false, headers: new Headers({ location: "https://evil.example/feed" }) }; },
+    sleep: async () => { throw new Error("should not sleep"); },
+  });
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(init.redirect, "manual");
+  assert.equal(opened, 1);
+  assert.equal(statuses.at(-1).state, "error");
+  assert.match(statuses.at(-1).detail, /redirect/);
+});

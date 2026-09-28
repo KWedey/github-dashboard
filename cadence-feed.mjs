@@ -59,7 +59,8 @@ export function startCadenceFeed({ key, url = DEFAULT_FEED_URL, onInvalidate, on
       const armStall = () => { clearTimeout(stall); stall = setTimeout(() => controller.abort(new Error("no heartbeat")), STALL_MS); };
       try {
         onStatus({ state: "connecting" });
-        const res = await fetchImpl(url, { headers: { "x-relay-key": key, Accept: "text/event-stream" }, signal: controller.signal });
+        const res = await fetchImpl(url, { headers: { "x-relay-key": key, Accept: "text/event-stream" }, signal: controller.signal, redirect: "manual" });
+        if (res.status >= 300 && res.status < 400) { onStatus({ state: "error", detail: `Cadence feed URL redirects (${res.status}); the key is only sent to the configured host` }); return; }
         if (res.status === 401) { onStatus({ state: "error", detail: "Cadence rejected the feed key (401); reissue it at Settings → Feed Keys" }); return; }
         if (res.status === 429) {
           const wait = Math.max(1, Number(res.headers.get("retry-after")) || 30) * 1000;
