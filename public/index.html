@@ -127,17 +127,17 @@ table { table-layout:fixed } th:first-child, td:first-child { width:auto } td.nu
 @media (max-width:700px) {
   th.lines, td.lines { display:none }
   th:nth-child(2), td:nth-child(2) { width:auto }
-  #issueList table, #prList table, #rrList table, #filedList table { display:block }
-  #issueList thead, #prList thead, #rrList thead, #filedList thead { display:none }
-  #issueList tbody, #prList tbody, #rrList tbody, #filedList tbody, #issueList tr, #prList tr, #rrList tr, #filedList tr { display:block; width:100% }
-  #issueList td, #prList td, #rrList td, #filedList td { display:block; width:auto !important; padding:4px 12px; border:0 }
-  #issueList tr, #prList tr, #rrList tr, #filedList tr { padding:6px 0; border-bottom:1px solid var(--grid) }
-  #issueList td:first-child, #prList td:first-child, #rrList td:first-child, #filedList td:first-child { padding-top:6px }
-  #issueList td.num, #prList td.num, #rrList td.num, #filedList td.num { text-align:left; display:inline-block; padding-top:0; padding-bottom:8px }
-  #issueList td.num::before, #prList td.num::before, #rrList td.num::before, #filedList td.num::before { content:"updated "; color:var(--muted) }
+  #issueList table, #prList table, #rrList table, #crList table, #qaList table { display:block }
+  #issueList thead, #prList thead, #rrList thead, #crList thead, #qaList thead { display:none }
+  #issueList tbody, #prList tbody, #rrList tbody, #crList tbody, #qaList tbody, #issueList tr, #prList tr, #rrList tr, #crList tr, #qaList tr { display:block; width:100% }
+  #issueList td, #prList td, #rrList td, #crList td, #qaList td { display:block; width:auto !important; padding:4px 12px; border:0 }
+  #issueList tr, #prList tr, #rrList tr, #crList tr, #qaList tr { padding:6px 0; border-bottom:1px solid var(--grid) }
+  #issueList td:first-child, #prList td:first-child, #rrList td:first-child, #crList td:first-child, #qaList td:first-child { padding-top:6px }
+  #issueList td.num, #prList td.num, #rrList td.num, #crList td.num, #qaList td.num { text-align:left; display:inline-block; padding-top:0; padding-bottom:8px }
+  #issueList td.num::before, #prList td.num::before, #rrList td.num::before, #crList td.num::before, #qaList td.num::before { content:"updated "; color:var(--muted) }
   .item .repo { white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
   .grid2 section > header { flex-wrap:wrap; align-items:center } .grid2 section > header h2 { flex:1 1 auto } .grid2 section > header .sub { display:none } .grid2 .win-only { order:3; flex-basis:100%; margin:4px 0 0 }
-  tbody tr:hover td { background:transparent } #issueList tr:hover, #prList tr:hover, #rrList tr:hover, #filedList tr:hover { background:var(--hover) }
+  tbody tr:hover td { background:transparent } #issueList tr:hover, #prList tr:hover, #rrList tr:hover, #crList tr:hover, #qaList tr:hover { background:var(--hover) }
   .list-filter button { padding:6px 4px; font-size:12.5px }
 } .item .title:hover { color:var(--accent-ink) }
 .pill { display:inline-flex; align-items:center; font-size:11.5px; padding:1px 8px; border-radius:99px; border:1px solid var(--border); color:var(--ink2); margin:0 4px 3px 0; white-space:nowrap; font-weight:500 }
@@ -271,21 +271,22 @@ table { table-layout:fixed } th:first-child, td:first-child { width:auto } td.nu
         <label class="win-only"><input type="checkbox" id="prWin"> Only selected window</label></header>
       <div class="segs list-filter" id="prFilter"><button data-f="all">All</button><button data-f="open">Open</button><button data-f="merged">Merged</button></div>
       <div id="prList" class="scroll"></div>
+      <details><summary id="rrSummary">Waiting on my review</summary><div id="rrList"></div></details>
     </section>
   </div>
 
   <div class="grid2">
-    <section id="reviews">
-      <header><h2>Waiting on my review</h2><span id="rrCount" hidden>–</span><span class="sub" id="rrSub"></span>
-        <label class="win-only"><input type="checkbox" id="rrWin"> Only selected window</label></header>
-      <div class="segs list-filter" id="rrFilter"><button data-f="all">All</button><button data-f="ready">Ready</button><button data-f="blocked">Blocked</button></div>
-      <div id="rrList" class="scroll"></div>
+    <section id="codeReview">
+      <header><h2>Needs code review</h2><span id="crCount" hidden>–</span><span class="sub" id="crSub"></span>
+        <label class="win-only"><input type="checkbox" id="crWin"> Only selected window</label></header>
+      <div class="segs list-filter" id="crFilter"><button data-f="all">All</button><button data-f="others">Others'</button><button data-f="mine">Mine</button></div>
+      <div id="crList" class="scroll"></div>
     </section>
-    <section id="filed">
-      <header><h2>Issues I filed</h2><span id="filedCount" hidden>–</span><span class="sub" id="filedSub"></span>
-        <label class="win-only"><input type="checkbox" id="filedWin"> Only selected window</label></header>
-      <div class="segs list-filter" id="filedFilter"><button data-f="open">Open</button><button data-f="assigned">Assigned</button><button data-f="unassigned">Unassigned</button></div>
-      <div id="filedList" class="scroll"></div>
+    <section id="testing">
+      <header><h2>Needs testing</h2><span id="qaCount" hidden>–</span><span class="sub" id="qaSub"></span>
+        <label class="win-only"><input type="checkbox" id="qaWin"> Only selected window</label></header>
+      <div class="segs list-filter" id="qaFilter"><button data-f="all">All</button><button data-f="others">Others'</button><button data-f="mine">Mine</button></div>
+      <div id="qaList" class="scroll"></div>
     </section>
   </div>
 
@@ -330,8 +331,8 @@ function skeletons() {
   $("#legend").innerHTML = SERIES.map(([, n, c]) => `<span><span class="dot" style="background:${c}"></span>${n}</span>`).join("");
   $("#issueList").innerHTML = skRows(6);
   $("#prList").innerHTML = skRows(5);
-  $("#rrList").innerHTML = skRows(4);
-  $("#filedList").innerHTML = skRows(4);
+  $("#crList").innerHTML = skRows(4);
+  $("#qaList").innerHTML = skRows(4);
   $("#bands").innerHTML = skRows(5);
 }
 skeletons();
@@ -339,11 +340,11 @@ let excluded = new Set(store.get("excludedRepos", []));
 let customRange = store.get("customRange", { from: shift(today(), -6), to: today() });
 let activeTile = store.get("activeTile", "7d");
 if (activeTile === "range") activeTile = "custom";
-let winOnly = { issues: false, prs: false, reviews: false, filed: false, ...store.get("winOnly", {}) };
+let winOnly = { issues: false, prs: false, codeReview: false, testing: false, ...store.get("winOnly", {}) };
 let workWeek = store.get("workWeek", false);
 $("#workWeek").checked = workWeek;
 const isWorkDay = (k) => { const [y,m,d] = k.split("-").map(Number); const dow = new Date(y, m-1, d).getDay(); return dow >= 1 && dow <= 4; };
-let listFilter = { issues: "open", prs: "all", reviews: "all", filed: "open", ...store.get("listFilter", {}) };
+let listFilter = { issues: "open", prs: "all", codeReview: "all", testing: "all", ...store.get("listFilter", {}) };
 if (listFilter.issues === "all") listFilter.issues = "open";
 const HIST_DAYS = 30;
 let chartH = store.get("chartH", 280);
@@ -391,7 +392,7 @@ function fetchRange() {
 }
 async function loadLive() {
   try { live = await api("/api/live"); $("#who").textContent = live.user;
-    noteRepos([...live.issues, ...live.filed, ...live.prs, ...live.reviewRequests].map((i) => i.repo)); renderLive(); }
+    noteRepos([...live.issues, ...live.prs, ...live.reviewRequests, ...live.needsCodeReview, ...live.needsTesting].map((i) => i.repo)); renderLive(); }
   catch (e) { setStatus("Live lists failed: " + e.message, true); }
 }
 async function loadDaily(force) {
@@ -424,7 +425,7 @@ function renderLive() {
   if (!live) return;
   const win = windowFor(activeTile);
   const winLabel = fmtRange(win[0], win[1]);
-  $("#issueWin").checked = winOnly.issues; $("#prWin").checked = winOnly.prs; $("#rrWin").checked = winOnly.reviews; $("#filedWin").checked = winOnly.filed;
+  $("#issueWin").checked = winOnly.issues; $("#prWin").checked = winOnly.prs; $("#crWin").checked = winOnly.codeReview; $("#qaWin").checked = winOnly.testing;
   const openIssues = live.issues.filter((i) => visible(i.repo) && (!winOnly.issues || inWindow(i.updated_at, win))).sort((a,b) => b.updated_at.localeCompare(a.updated_at));
   const inflight = openIssues.filter(inflightIssue);
   const closedIssues = recent("issuesClosed", winOnly.issues ? win : null).filter((i) => i.state === "closed").sort((a,b) => b.closed_at.localeCompare(a.closed_at));
@@ -443,42 +444,39 @@ function renderLive() {
   const prSets = { open: openPrs, merged: mergedPrs, all: [...openPrs, ...mergedPrs] };
   $("#prSub").textContent = winOnly.prs ? `${winLabel}: open PRs updated in window, merged PRs merged in window` : `${openPrs.length - drafts} in review, ${drafts} draft, ${mergedPrs.length} merged in ${HIST_DAYS}d`;
   document.querySelectorAll("#prFilter button").forEach((b) => { b.setAttribute("aria-pressed", b.dataset.f === listFilter.prs); b.textContent = `${{all:"All",open:"Open",merged:"Merged"}[b.dataset.f]} ${prSets[b.dataset.f].length}`; });
-  const allIssues = live.issues.filter((i) => visible(i.repo)), allPrs = live.prs.filter((p) => visible(p.repo)), allRr = live.reviewRequests.filter((p) => visible(p.repo));
-  $("#hdrCounts").innerHTML = `<a href="#issues"><b>${allIssues.length}</b>issues, ${allIssues.filter(inflightIssue).length} in flight</a><a href="#prs"><b>${allPrs.length}</b>PRs, ${allPrs.filter((p) => !p.draft).length} in review</a><a href="#reviews"><b>${allRr.length}</b>to review, ${allRr.filter(reviewReady).length} ready</a>`;
+  const allIssues = live.issues.filter((i) => visible(i.repo)), allPrs = live.prs.filter((p) => visible(p.repo));
+  const allCr = live.needsCodeReview.filter((p) => visible(p.repo)), allQa = live.needsTesting.filter((p) => visible(p.repo));
+  $("#hdrCounts").innerHTML = `<a href="#issues"><b>${allIssues.length}</b>issues, ${allIssues.filter(inflightIssue).length} in flight</a><a href="#prs"><b>${allPrs.length}</b>PRs, ${allPrs.filter((p) => !p.draft).length} in review</a><a href="#codeReview"><b>${allCr.length}</b>need code review</a><a href="#testing"><b>${allQa.length}</b>need testing</a>`;
   $("#issueCount").textContent = issueSets[listFilter.issues].length; $("#prCount").textContent = prSets[listFilter.prs].length;
   if (!daily) $("#status").textContent = "Loading activity";
   const prs = prSets[listFilter.prs];
   $("#prList").innerHTML = prs.length ? prTable(prs) : `<div class="empty">No pull requests here in the selected repos.</div>`;
   renderPickup();
 
-  const rr = live.reviewRequests.filter((p) => visible(p.repo) && (!winOnly.reviews || inWindow(p.updated_at, win))).sort((a,b) => b.updated_at.localeCompare(a.updated_at));
-  const rrSets = { all: rr, ready: rr.filter(reviewReady), blocked: rr.filter((p) => !reviewReady(p)) };
-  $("#rrSub").textContent = winOnly.reviews ? `${winLabel}: review requests updated in window` : `${rrSets.ready.length} ready to review, ${rrSets.blocked.length} blocked by a draft, conflict, or failing check`;
-  document.querySelectorAll("#rrFilter button").forEach((b) => { b.setAttribute("aria-pressed", b.dataset.f === listFilter.reviews); b.textContent = `${{all:"All",ready:"Ready",blocked:"Blocked"}[b.dataset.f]} ${rrSets[b.dataset.f].length}`; });
-  $("#rrCount").textContent = rrSets[listFilter.reviews].length;
-  const rrRows = rrSets[listFilter.reviews];
-  $("#rrList").innerHTML = rrRows.length ? prTable(rrRows) : `<div class="empty">No review requests here in the selected repos.</div>`;
-
-  const filed = live.filed.filter((i) => visible(i.repo) && (!winOnly.filed || inWindow(i.updated_at, win))).sort((a,b) => b.updated_at.localeCompare(a.updated_at));
-  const filedSets = { open: filed, assigned: filed.filter((i) => i.assignees.length), unassigned: filed.filter((i) => !i.assignees.length) };
-  $("#filedSub").textContent = winOnly.filed ? `${winLabel}: issues I opened, updated in window` : `${filedSets.assigned.length} assigned, ${filedSets.unassigned.length} unassigned, ${filed.filter(inflightIssue).length} in flight`;
-  document.querySelectorAll("#filedFilter button").forEach((b) => { b.setAttribute("aria-pressed", b.dataset.f === listFilter.filed); b.textContent = `${{open:"Open",assigned:"Assigned",unassigned:"Unassigned"}[b.dataset.f]} ${filedSets[b.dataset.f].length}`; });
-  $("#filedCount").textContent = filedSets[listFilter.filed].length;
-  const filedRows = filedSets[listFilter.filed];
-  $("#filedList").innerHTML = filedRows.length ? `<table><thead><tr><th>Issue</th><th>Owner</th><th class="num">Updated</th></tr></thead><tbody>` +
-    filedRows.map((i) => `<tr><td><div class="item"><span class="repo">${esc(i.repo)} #${i.number}</span><a class="title" href="${i.url}" target="_blank">${esc(i.title)}</a></div></td>
-      <td>${i.assignees.length ? i.assignees.map((a) => `<span class="pill${a === live.user ? " flight" : ""}">${esc(a)}</span>`).join("") : `<span class="pill warn">Unassigned</span>`}${inflightIssue(i) ? i.linkedPrs.map((p) => `<a class="pill flight" href="${p.url}" target="_blank">PR #${p.number}${p.draft ? " draft" : ""}</a>`).join("") : ""}${(i.labels || []).map((l) => `<span class="pill">${esc(l.name)}</span>`).join("")}</td>
-      <td class="num when">${ago(i.updated_at || i.created_at)}</td></tr>`).join("") + "</tbody></table>" : `<div class="empty">No open issues I filed in the selected repos.</div>`;
+  const rr = live.reviewRequests.filter((p) => visible(p.repo));
+  $("#rrSummary").textContent = `Waiting on my review (${rr.length})`;
+  $("#rrList").innerHTML = rr.length ? prTable(rr) : `<div class="empty">No review requests.</div>`;
+  renderQueue(live.needsCodeReview, "codeReview", "cr", "needs code review", "review", win, winLabel);
+  renderQueue(live.needsTesting, "testing", "qa", "needs testing", "test", win, winLabel);
 }
-const reviewReady = (p) => !p.draft && p.mergeable !== "CONFLICTING" && p.checks !== "FAILURE" && p.checks !== "ERROR";
+function renderQueue(all, key, id, label, verb, win, winLabel) {
+  const rows = all.filter((p) => visible(p.repo) && (!winOnly[key] || inWindow(p.updated_at, win))).sort((a,b) => a.updated_at.localeCompare(b.updated_at));
+  const sets = { all: rows, others: rows.filter((p) => p.author !== live.user), mine: rows.filter((p) => p.author === live.user) };
+  const oldest = rows.length ? ago(rows[0].updated_at) : null;
+  $(`#${id}Sub`).textContent = winOnly[key] ? `${winLabel}: queued PRs updated in window, oldest first` : `${sets.others.length} by others, ${sets.mine.length} mine${oldest ? `, longest waiting ${oldest}` : ""}`;
+  document.querySelectorAll(`#${id}Filter button`).forEach((b) => { b.setAttribute("aria-pressed", b.dataset.f === listFilter[key]); b.textContent = `${{all:"All",others:"Others'",mine:"Mine"}[b.dataset.f]} ${sets[b.dataset.f].length}`; });
+  const shown = sets[listFilter[key]];
+  $(`#${id}Count`).textContent = shown.length;
+  $(`#${id}List`).innerHTML = shown.length ? prTable(shown, { author: true, hideLabel: label }) : `<div class="empty">Nothing waiting to ${verb} in the selected repos.</div>`;
+}
 const QUEUE_LABELS = new Set(["needs testing", "needs code review"]);
-function prTable(prs) {
+function prTable(prs, { author = false, hideLabel = null } = {}) {
   return `<table><thead><tr><th>Pull request</th><th>Status</th><th class="num lines">Lines</th><th class="num">Updated</th></tr></thead><tbody>` +
     prs.map((p) => {
       if (p.merged_at) return `<tr><td><div class="item"><span class="repo">${esc(p.repo)} #${p.number}</span><a class="title" href="${p.url}" target="_blank">${esc(p.title)}</a></div></td><td><span class="pill good">Merged</span></td><td class="num when lines"></td><td class="num when">${ago(p.merged_at)}</td></tr>`;
       const [t, c] = prPhase(p);
-      const queue = (p.labels || []).filter((l) => QUEUE_LABELS.has(l.name.toLowerCase())).map((l) => `<span class="pill warn">${esc(l.name)}</span>`).join("");
-      return `<tr><td><div class="item"><span class="repo">${esc(p.repo)} #${p.number} — ${esc(p.head)}</span><a class="title" href="${p.url}" target="_blank">${esc(p.title)}</a></div></td>
+      const queue = (p.labels || []).filter((l) => QUEUE_LABELS.has(l.name.toLowerCase()) && l.name.toLowerCase() !== hideLabel).map((l) => `<span class="pill warn">${esc(l.name)}</span>`).join("");
+      return `<tr><td><div class="item"><span class="repo">${esc(p.repo)} #${p.number}${author && p.author ? ` by ${esc(p.author)}` : ""} — ${esc(p.head)}</span><a class="title" href="${p.url}" target="_blank">${esc(p.title)}</a></div></td>
       <td><span class="${c}">${t}</span>${queue}${p.mergeable === "CONFLICTING" ? `<span class="pill bad">Conflicts</span>` : ""}${p.closes.map((i) => `<a class="pill" href="${i.url}" target="_blank">Closes #${i.number}</a>`).join("")}${p.reviewers.map((r) => `<span class="pill">${esc(r)}</span>`).join("")}</td>
       <td class="num when lines">+${p.additions} −${p.deletions}</td><td class="num when">${ago(p.updated_at)}</td></tr>`; }).join("") + "</tbody></table>";
 }
@@ -551,7 +549,7 @@ function drawChart(from, to) {
 }
 
 
-const LIST_KEYS = { issueFilter: "issues", prFilter: "prs", rrFilter: "reviews", filedFilter: "filed", issueWin: "issues", prWin: "prs", rrWin: "reviews", filedWin: "filed" };
+const LIST_KEYS = { issueFilter: "issues", prFilter: "prs", crFilter: "codeReview", qaFilter: "testing", issueWin: "issues", prWin: "prs", crWin: "codeReview", qaWin: "testing" };
 document.querySelectorAll(".list-filter button").forEach((b) => b.onclick = () => { listFilter[LIST_KEYS[b.parentElement.id]] = b.dataset.f; store.set("listFilter", listFilter); renderLive(); });
 document.querySelectorAll(".win-only input:not(#workWeek)").forEach((el) => el.onchange = (e) => { winOnly[LIST_KEYS[el.id]] = e.target.checked; store.set("winOnly", winOnly); renderLive(); });
 $("#workWeek").onchange = (e) => { workWeek = e.target.checked; store.set("workWeek", workWeek); renderDaily(); };

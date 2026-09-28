@@ -203,9 +203,9 @@ async function searchAll(c, q, fragment) {
   }
   return nodes;
 }
-const ISSUE_FRAG = `... on Issue { number title url createdAt updatedAt bodyText comments{ totalCount } repository{ nameWithOwner } labels(first:10){ nodes{ name color } } milestone{ title } assignees(first:5){ nodes{ login } }
+const ISSUE_FRAG = `... on Issue { number title url createdAt updatedAt bodyText comments{ totalCount } repository{ nameWithOwner } labels(first:10){ nodes{ name color } } milestone{ title }
   linkedPrs: closedByPullRequestsReferences(first:10, includeClosedPrs:false){ nodes{ number url isDraft state repository{ nameWithOwner } } } }`;
-const PR_FRAG = `... on PullRequest { number title url createdAt updatedAt isDraft reviewDecision mergeable headRefName baseRefName additions deletions repository{ nameWithOwner }
+const PR_FRAG = `... on PullRequest { number title url createdAt updatedAt isDraft reviewDecision mergeable headRefName baseRefName additions deletions author{ login } repository{ nameWithOwner }
   labels(first:30){ nodes{ name color } } statusCheckRollup{ state } closingIssuesReferences(first:5){ nodes{ number title url } }
   reviewRequests(first:5){ nodes{ requestedReviewer{ ... on User{ login } ... on Team{ name } } } } }`;
 function firstLine(text) {
@@ -213,20 +213,28 @@ function firstLine(text) {
   return line.length > 180 ? line.slice(0, 177).replace(/\s+\S*$/, "") + "…" : line;
 }
 function slimPr(n) {
-  return { repo: n.repository.nameWithOwner, number: n.number, title: n.title, url: n.url, created_at: n.createdAt, updated_at: n.updatedAt, draft: n.isDraft, reviewDecision: n.reviewDecision, mergeable: n.mergeable, checks: n.statusCheckRollup?.state || null, head: n.headRefName, base: n.baseRefName, additions: n.additions, deletions: n.deletions, labels: n.labels.nodes, closes: n.closingIssuesReferences.nodes, reviewers: n.reviewRequests.nodes.map((r) => r.requestedReviewer?.login || r.requestedReviewer?.name).filter(Boolean) };
+  return { repo: n.repository.nameWithOwner, number: n.number, title: n.title, url: n.url, author: n.author?.login || null, created_at: n.createdAt, updated_at: n.updatedAt, draft: n.isDraft, reviewDecision: n.reviewDecision, mergeable: n.mergeable, checks: n.statusCheckRollup?.state || null, head: n.headRefName, base: n.baseRefName, additions: n.additions, deletions: n.deletions, labels: n.labels.nodes, closes: n.closingIssuesReferences.nodes, reviewers: n.reviewRequests.nodes.map((r) => r.requestedReviewer?.login || r.requestedReviewer?.name).filter(Boolean) };
 }
 function slimIssue(n) {
-  return { repo: n.repository.nameWithOwner, number: n.number, title: n.title, url: n.url, created_at: n.createdAt, updated_at: n.updatedAt, labels: n.labels.nodes, comments: n.comments.totalCount, why: firstLine(n.bodyText), milestone: n.milestone?.title || null, assignees: n.assignees.nodes.map((a) => a.login), linkedPrs: n.linkedPrs.nodes.map((p) => ({ repo: p.repository.nameWithOwner, number: p.number, url: p.url, draft: p.isDraft, state: p.state })) };
+  return { repo: n.repository.nameWithOwner, number: n.number, title: n.title, url: n.url, created_at: n.createdAt, updated_at: n.updatedAt, labels: n.labels.nodes, comments: n.comments.totalCount, why: firstLine(n.bodyText), milestone: n.milestone?.title || null, linkedPrs: n.linkedPrs.nodes.map((p) => ({ repo: p.repository.nameWithOwner, number: p.number, url: p.url, draft: p.isDraft, state: p.state })) };
+}
+const QUEUES = { needsCodeReview: "Needs Code Review", needsTesting: "Needs Testing" };
+async function queueScope(c) {
+  const user = await c.me();
+  if (!c.orgs) c.orgs = (await c.gh(`${API}/user/orgs?per_page=100`)).map((o) => o.login);
+  return [`user:${user}`, ...c.orgs.map((o) => `org:${o}`)].join(" ");
 }
 async function liveData(c) {
   const user = await c.me();
-  const [issues, filed, prs, reviewRequests] = await Promise.all([
+  const scope = await queueScope(c);
+  const [issues, prs, reviewRequests, needsCodeReview, needsTesting] = await Promise.all([
     searchAll(c, `assignee:${user} is:issue is:open`, ISSUE_FRAG),
-    searchAll(c, `author:${user} is:issue is:open`, ISSUE_FRAG),
     searchAll(c, `author:${user} is:pr is:open`, PR_FRAG),
     searchAll(c, `review-requested:${user} is:pr is:open`, PR_FRAG),
+    searchAll(c, `${scope} is:pr is:open label:"${QUEUES.needsCodeReview}"`, PR_FRAG),
+    searchAll(c, `${scope} is:pr is:open label:"${QUEUES.needsTesting}"`, PR_FRAG),
   ]);
-  return { user, fetchedAt: new Date().toISOString(), issues: issues.map(slimIssue), filed: filed.map(slimIssue), prs: prs.map(slimPr), reviewRequests: reviewRequests.map(slimPr) };
+  return { user, fetchedAt: new Date().toISOString(), issues: issues.map(slimIssue), prs: prs.map(slimPr), reviewRequests: reviewRequests.map(slimPr), needsCodeReview: needsCodeReview.map(slimPr), needsTesting: needsTesting.map(slimPr) };
 }
 
 // ---------- local repos (owner only) ----------
