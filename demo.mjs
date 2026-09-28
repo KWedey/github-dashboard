@@ -42,10 +42,11 @@ export function demoLive(todayKey) {
 export const demoRepos = REPOS.slice(0, 3).map((repo) => ({ repo, path: `/home/octocat/${repo.split("/")[1]}` }));
 
 export function demoQuota() {
-  const now = Date.now(), hours = (h) => new Date(now + h * 3600 * 1000).toISOString();
-  const acct = (id, email, five, seven, fable, fiveIn, sevenIn) => ({ file: `claude-${id}-${email}.json`, id, email, fetched_at: new Date(now - 4 * 60 * 1000).toISOString(),
-    five_hour: { pct: five, resets_at: five ? hours(fiveIn) : null }, seven_day: { pct: seven, resets_at: hours(sevenIn) }, fable: { pct: fable, resets_at: hours(sevenIn) } });
-  return { available: true, fetched_at: new Date(now - 4 * 60 * 1000).toISOString(), refreshing: false, accounts: [
-    acct("a1b2c3d4", "octocat@acme.com", 73, 86, 67, 2.1, 65), acct("e5f6a7b8", "mona@acme.com", 25, 64, 100, 3.5, 112),
-    acct("c9d0e1f2", "hubot@acme.com", 0, 100, 71, 0, 7), acct("13579bdf", "octocat@acme.com", 19, 13, 20, 4, 118) ] };
+  const now = Date.now(), hours = (h) => new Date(now + h * 3600 * 1000).toISOString(), at = new Date(now - 4 * 60 * 1000).toISOString();
+  const w = (name, pct, inHours) => ({ name, pct, resets_at: pct ? hours(inHours) : null });
+  const acct = (id, label, five, seven, fable, fiveIn, sevenIn) => ({ file: `claude-${id}-${label}.json`, provider: "claude", id, label, fetched_at: at, windows: [w("5 hour", five, fiveIn), w("7 day", seven, sevenIn), w("Fable", fable, sevenIn)] });
+  return { available: true, fetched_at: at, refreshing: false, accounts: [
+    acct("a1b2c3d4", "octocat@acme.com-team", 73, 86, 67, 2.1, 65), acct("e5f6a7b8", "mona@acme.com", 25, 64, 100, 3.5, 112),
+    acct("c9d0e1f2", "hubot@acme.com", 0, 100, 71, 0, 7), acct("13579bdf", "octocat@acme.com", 19, 13, 20, 4, 118),
+    { file: "codex-2468ace0-octocat@acme.com-pro.json", provider: "codex", id: "2468ace0", label: "octocat@acme.com-pro", fetched_at: at, windows: [w("7 day", 15, 150)] } ] };
 }

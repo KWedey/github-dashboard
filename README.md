@@ -34,7 +34,7 @@ The feed is an invalidation signal, never the source of truth: a delivery naming
 
 ## Claude quotas (optional, owner only)
 
-If [cpa-route](https://github.com/KWedey/dev-environment) is installed, a row at the top shows each Claude account's 5-hour, 7-day, and Fable windows with their reset times. The numbers come from cpa-route's usage cache (`~/.config/cpa-route/usage-cache.json`); when it is more than 15 minutes old the dashboard runs `cpa-route ranking` in the background, which refetches under cpa-route's own rate-limit rules, and the row updates when it finishes. `CPA_USAGE_CACHE` and `CPA_ROUTE_BIN` override the paths. Guests never see this row.
+If [cpa-route](https://github.com/KWedey/dev-environment) is installed, a row at the top shows each Claude account's 5-hour, 7-day, and Fable windows with their reset times. The numbers come from cpa-route's usage cache (`~/.config/cpa-route/usage-cache.json`); when it is more than 15 minutes old the dashboard runs `cpa-route ranking` in the background, which refetches under cpa-route's own rate-limit rules, and the row updates when it finishes. A Claude account whose auth file names a real organization (not "<email>'s Organization") is labelled `-team`. Codex accounts are read from the proxy's management API using the key cpa-route keeps in the macOS Keychain (`cliproxyapi-management`), or `CPA_MANAGEMENT_KEY`; the proxy reports Codex windows from the headers of the last request it served. `CPA_USAGE_CACHE`, `CPA_ROUTE_BIN`, `CPA_AUTH_DIR`, and `CPA_URL` override the paths. Guests never see this row.
 
 ## Demo mode
 

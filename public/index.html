@@ -82,7 +82,7 @@ section > header .sub { font-size:12.5px; color:var(--muted) }
 #quota { padding-bottom:0 } #quota[hidden] { display:none }
 .qgrid { display:grid; grid-template-columns:repeat(auto-fill, minmax(300px, 1fr)); gap:10px }
 .qcard { border:1px solid var(--border); border-radius:8px; padding:12px 14px; background:var(--surface); display:grid; gap:9px; min-width:0 }
-.qcard .who { display:flex; align-items:baseline; gap:8px; font-weight:600; font-size:13px; min-width:0 } .qcard .who .email { overflow:hidden; text-overflow:ellipsis; white-space:nowrap } .qcard .who .id { font-weight:400; font-size:11px; color:var(--muted); font-family:ui-monospace,SFMono-Regular,Menlo,monospace }
+.qcard .who { display:flex; align-items:baseline; gap:8px; font-weight:600; font-size:13px; min-width:0 } .qcard .who .email { overflow:hidden; text-overflow:ellipsis; white-space:nowrap } .qcard .who .id { margin-left:auto; font-weight:400; font-size:11px; color:var(--muted); font-family:ui-monospace,SFMono-Regular,Menlo,monospace }
 .qcard.spent { border-color:var(--bad) }
 .qrow { display:grid; grid-template-columns:52px 1fr 44px; align-items:center; gap:10px; font-size:12px }
 .qrow .qn { color:var(--ink2); font-weight:500 } .qrow .qv { text-align:right; font-weight:700; font-variant-numeric:tabular-nums }
@@ -393,7 +393,6 @@ $("#repoBtn").onclick = () => $("#repoPanel").classList.toggle("open");
 document.addEventListener("click", (e) => { if (!$("#repoMenu").contains(e.target)) $("#repoPanel").classList.remove("open"); });
 
 let live = null, daily = null, quota = null;
-const QUOTA_WINDOWS = [["five_hour", "5 hour"], ["seven_day", "7 day"], ["fable", "Fable"]];
 const untilText = (iso) => { if (!iso) return ""; const mins = Math.round((new Date(iso) - Date.now()) / 60000); if (mins <= 0) return "resetting"; const h = Math.floor(mins / 60), m = mins % 60; return h >= 48 ? `${Math.floor(h / 24)}d ${h % 24}h` : h ? `${h}h ${String(m).padStart(2, "0")}m` : `${m}m`; };
 const whenText = (iso) => { if (!iso) return ""; const d = new Date(iso), sameDay = dayKey(d) === today(); return d.toLocaleString([], sameDay ? { hour: "numeric", minute: "2-digit" } : { weekday: "short", hour: "numeric", minute: "2-digit" }); };
 async function loadQuota(force) {
@@ -403,13 +402,14 @@ function renderQuota() {
   const el = $("#quota");
   if (!quota || !quota.available) { el.hidden = true; return; }
   el.hidden = false;
-  const accounts = [...quota.accounts].sort((a, b) => (b.seven_day?.pct || 0) - (a.seven_day?.pct || 0));
+  const weekly = (a) => a.windows.find((w) => w.name === "7 day")?.pct || 0;
+  const accounts = [...quota.accounts].sort((a, b) => (a.provider > b.provider) - (a.provider < b.provider) || weekly(b) - weekly(a));
   $("#quotaGrid").innerHTML = accounts.map((a) => {
-    const spent = QUOTA_WINDOWS.some(([k]) => (a[k]?.pct || 0) >= 95);
-    return `<div class="qcard${spent ? " spent" : ""}"><div class="who"><span class="email" title="${esc(a.file)}">${esc(a.email)}</span><span class="id">${esc(a.id.slice(0, 4))}</span></div>` +
-      QUOTA_WINDOWS.map(([k, name]) => { const w = a[k]; if (!w) return `<div class="qrow"><span class="qn">${name}</span><span class="qbar"></span><span class="qv">–</span><span class="qreset">no window reported</span></div>`;
+    const spent = a.windows.some((w) => (w.pct || 0) >= 95);
+    return `<div class="qcard${spent ? " spent" : ""}"><div class="who"><span class="email" title="${esc(a.file)}${a.fetched_at ? ` · as of ${ago(a.fetched_at)} ago` : ""}">${esc(a.label)}</span><span class="id">${esc(a.provider)} ${esc(a.id.slice(0, 4))}</span></div>` +
+      a.windows.map((w) => { if (w.pct === null) return `<div class="qrow"><span class="qn">${esc(w.name)}</span><span class="qbar"></span><span class="qv">–</span><span class="qreset">no window reported</span></div>`;
         const cls = w.pct >= 95 ? " bad" : w.pct >= 75 ? " warn" : "", state = w.pct >= 95 ? "Spent" : w.pct >= 75 ? "Warning" : "";
-        return `<div class="qrow${cls}"><span class="qn">${name}</span><span class="qbar"><i style="width:${Math.min(100, w.pct)}%"></i></span><span class="qv">${w.pct}%</span>
+        return `<div class="qrow${cls}"><span class="qn">${esc(w.name)}</span><span class="qbar"><i style="width:${Math.min(100, w.pct)}%"></i></span><span class="qv">${w.pct}%</span>
           <span class="qreset"><span>${state ? `<b>${state}</b> · ` : ""}${w.resets_at ? `resets in <b>${untilText(w.resets_at)}</b>` : w.pct ? "reset unknown" : "unused"}</span><span>${w.resets_at ? whenText(w.resets_at) : ""}</span></span></div>`; }).join("") + "</div>";
   }).join("");
   $("#quotaSub").textContent = `${accounts.length} accounts · as of ${quota.fetched_at ? ago(quota.fetched_at) + " ago" : "?"}${quota.refreshing ? " · refreshing" : ""} · via cpa-route`;

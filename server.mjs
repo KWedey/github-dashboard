@@ -263,25 +263,59 @@ function refreshQuota() {
   quotaRefresh = new Promise((resolve) => execFile(CPA_ROUTE, ["ranking"], { timeout: 120 * 1000 }, (err) => { if (err) console.error("cpa-route ranking:", err.message); resolve(); }))
     .finally(() => { quotaRefresh = null; broadcast("quota", { at: new Date().toISOString() }); });
 }
-const window_ = (w) => w && typeof w.utilization === "number" ? { pct: Math.round(w.utilization), resets_at: w.resets_at || null } : null;
-function readQuota() {
+const AUTH_DIR = (process.env.CPA_AUTH_DIR || "~/.cli-proxy-api").replace(/^~/, process.env.HOME);
+const PROXY_BASE = process.env.CPA_URL || "http://localhost:8317";
+const KEYCHAIN_SERVICE = "cliproxyapi-management";
+let managementKey;
+function readManagementKey() {
+  if (managementKey !== undefined) return managementKey;
+  managementKey = process.env.CPA_MANAGEMENT_KEY || "";
+  if (!managementKey) try { managementKey = execFileSync("security", ["find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", process.env.USER, "-w"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 5000 }).trim(); } catch {}
+  if (!managementKey) try { managementKey = fs.readFileSync(path.join(process.env.HOME, ".config/cpa-route/management-key"), "utf8").trim(); } catch {}
+  return managementKey;
+}
+function orgSuffix(file) {
+  try {
+    const { organization_name: org, email } = JSON.parse(fs.readFileSync(path.join(AUTH_DIR, file), "utf8"));
+    return org && !org.startsWith(`${email}'s`) ? "-team" : "";
+  } catch { return ""; }
+}
+const window_ = (name, pct, resets_at) => ({ name, pct: Math.round(pct), resets_at: resets_at || null });
+function claudeAccounts() {
   let raw; try { raw = JSON.parse(fs.readFileSync(USAGE_CACHE, "utf8")); } catch { return null; }
-  const accounts = Object.entries(raw).map(([file, v]) => {
-    const u = v.usage || {};
-    const m = file.match(/^claude-([0-9a-f]+)-(.+?)\.json$/);
+  return Object.entries(raw).filter(([file]) => file.startsWith("claude-")).map(([file, v]) => {
+    const u = v.usage || {}, m = file.match(/^claude-([0-9a-f]+)-(.+?)\.json$/);
     const fable = (u.limits || []).find((l) => l.kind === "weekly_scoped" && l.scope?.model?.display_name === "Fable");
-    return { file, id: m ? m[1] : file, email: m ? m[2] : file, fetched_at: v.fetched_at || null,
-      five_hour: window_(u.five_hour), seven_day: window_(u.seven_day), fable: fable ? { pct: Math.round(fable.percent), resets_at: fable.resets_at || null } : null };
-  }).filter((a) => a.file.startsWith("claude-"));
-  const fetched = accounts.map((a) => Date.parse(a.fetched_at)).filter(Number.isFinite);
-  const oldest = fetched.length ? Math.min(...fetched) : 0;
-  return { accounts, fetched_at: oldest ? new Date(oldest).toISOString() : null, refreshing: Boolean(quotaRefresh) };
+    const w = (name, x) => x && typeof x.utilization === "number" ? window_(name, x.utilization, x.resets_at) : { name, pct: null, resets_at: null };
+    return { file, provider: "claude", id: m ? m[1] : file, label: (m ? m[2] : file) + orgSuffix(file), fetched_at: v.fetched_at || null,
+      windows: [w("5 hour", u.five_hour), w("7 day", u.seven_day), fable ? window_("Fable", fable.percent, fable.resets_at) : { name: "Fable", pct: null, resets_at: null }] };
+  });
+}
+async function codexAccounts() {
+  const key = readManagementKey();
+  if (!key) return [];
+  try {
+    const r = await fetch(`${PROXY_BASE}/v0/management/auth-files`, { headers: { Authorization: `Bearer ${key}` } });
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    const { files } = await r.json();
+    return files.filter((f) => f.type === "codex").map((f) => {
+      const sig = f.quota?.signals || {}, m = f.name.match(/^codex-([0-9a-f]+)-(.+?)(?:-(\w+))?\.json$/);
+      const win = (prefix, fallback) => { const mins = Number(sig[`X-Codex-${prefix}-Window-Minutes`]); if (!mins) return null;
+        const name = mins % 1440 === 0 ? `${mins / 1440} day` : mins % 60 === 0 ? `${mins / 60} hour` : `${mins} min`;
+        return window_(name || fallback, Number(sig[`X-Codex-${prefix}-Used-Percent`]) || 0, sig[`X-Codex-${prefix}-Reset-At`] ? new Date(Number(sig[`X-Codex-${prefix}-Reset-At`]) * 1000).toISOString() : null); };
+      const windows = [win("Secondary"), win("Primary")].filter(Boolean);
+      return { file: f.name, provider: "codex", id: m ? m[1] : f.name, label: `${m ? m[2] : f.email}${sig["X-Codex-Plan-Type"] ? `-${sig["X-Codex-Plan-Type"]}` : ""}`, fetched_at: f.quota?.observed_at || null,
+        windows: windows.length ? windows : [{ name: "usage", pct: null, resets_at: null }] };
+    });
+  } catch (e) { console.error("codex quota:", e.message); return []; }
 }
 async function quotaData(force) {
-  const q = readQuota();
-  if (!q) return { available: false };
-  if (force || !q.fetched_at || Date.now() - Date.parse(q.fetched_at) > QUOTA_STALE_MS) { refreshQuota(); q.refreshing = Boolean(quotaRefresh); }
-  return { available: true, ...q };
+  const claude = claudeAccounts();
+  if (!claude) return { available: false };
+  const fetched = claude.map((a) => Date.parse(a.fetched_at)).filter(Number.isFinite);
+  const oldest = fetched.length ? Math.min(...fetched) : 0;
+  if (force || !oldest || Date.now() - oldest > QUOTA_STALE_MS) refreshQuota();
+  return { available: true, fetched_at: oldest ? new Date(oldest).toISOString() : null, refreshing: Boolean(quotaRefresh), accounts: [...claude, ...(await codexAccounts())] };
 }
 
 // ---------- local repos (owner only) ----------
