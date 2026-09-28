@@ -1,6 +1,6 @@
 # github-dashboard
 
-Local dashboard of your own GitHub activity: assigned issues, open PRs, and per-day opened/merged counts.
+Local dashboard of your own GitHub activity: assigned issues, open PRs, PRs waiting on your review, issues you filed, and per-day opened/merged counts.
 
 ![Dashboard with sample data](docs/screenshot.png)
 
@@ -40,6 +40,8 @@ The feed is an invalidation signal, never the source of truth: a delivery naming
 
 - Assigned issues: `assignee:me is:issue is:open`. In-flight = has an open linked PR.
 - My open PRs: `author:me is:pr is:open`. In review = not draft.
+- Waiting on my review: `review-requested:me is:pr is:open`. Ready = not draft, no conflicts, checks not failing; Blocked = the rest.
+- Issues I filed: `author:me is:issue is:open`, split by whether anyone is assigned.
 - Issues opened: created by me that day. Issues closed: assigned to me, closed that day.
 - PRs opened / merged: authored by me.
 - Days are local midnight to midnight (server timezone).
