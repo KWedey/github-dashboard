@@ -463,7 +463,7 @@ function renderLive() {
 const requestedOfMe = (p) => live.reviewRequests.some((r) => itemKey(r) === itemKey(p));
 const askedOfMe = (p) => requestedOfMe(p) || p.assignees.includes(live.user);
 function ballInAuthorsCourt(p) {
-  if (p.draft || p.mergeable === "CONFLICTING" || p.checks === "FAILURE" || p.checks === "ERROR" || p.reviewDecision === "CHANGES_REQUESTED") return true;
+  if (p.draft || p.reviewDecision === "CHANGES_REQUESTED") return true;
   const mine = (p.reviews || []).find((r) => r.by === live.user);
   return Boolean(mine && mine.state !== "APPROVED" && p.pushed_at && mine.at > p.pushed_at);
 }
