@@ -409,7 +409,7 @@ function renderQuota() {
   const shared = domains.size === 1 ? [...domains][0] : null;
   const shortLabel = (label) => shared ? label.replace(`@${shared}`, "") : label;
   $("#quotaGrid").innerHTML = accounts.map((a) => {
-    const spent = a.windows.some((w) => (w.pct || 0) >= 95);
+    const spent = a.windows.some((w) => /^(5 hour|7 day)$/.test(w.name) && (w.pct || 0) >= 95);
     return `<div class="qcard${spent ? " spent" : ""}"><div class="who"><span class="email" title="${esc(a.label)} · ${esc(a.file)}${a.fetched_at ? ` · as of ${ago(a.fetched_at)} ago` : ""}">${esc(shortLabel(a.label))}</span><span class="id">${a.provider === "claude" ? "" : esc(a.provider) + " "}${esc(a.id.slice(0, 4))}</span><span class="used">used</span></div>` +
       a.windows.map((w) => { if (w.pct === null) return `<div class="qrow"><span class="qn">${esc(w.name)}</span><span class="qbar"></span><span class="qv">–</span><span class="qreset">no window reported</span></div>`;
         const cls = w.pct >= 95 ? " bad" : w.pct >= 75 ? " warn" : "", state = w.pct >= 95 ? "Spent" : w.pct >= 75 ? "Warning" : "";
