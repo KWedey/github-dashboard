@@ -50,3 +50,8 @@ export function demoQuota() {
     acct("c9d0e1f2", "hubot@acme.com", 0, 100, 71, 0, 7), acct("13579bdf", "octocat@acme.com", 19, 13, 20, 4, 118),
     { file: "codex-2468ace0-octocat@acme.com-pro.json", provider: "codex", id: "2468ace0", label: "octocat@acme.com-pro", fetched_at: at, windows: [w("5 hour", 42, 1.5), w("7 day", 15, 150)], resets: { available: 3, expires_at: hours(130) } } ] };
 }
+
+export function demoUpstream() {
+  return { available: true, upstream: "acme/github-dashboard", fork: "octocat/github-dashboard", ahead: 2, behind: 3, url: "https://github.com/acme/github-dashboard/compare/octocat:main...acme:main",
+    commits: [{ sha: "ee852cd", title: "Link each list to the matching GitHub search", author: "mona", at: new Date(Date.now() - 3600 * 1000).toISOString() }, { sha: "1b10a00", title: "Pickup order: Refresh list button", author: "mona", at: new Date(Date.now() - 86400 * 1000).toISOString() }] };
+}

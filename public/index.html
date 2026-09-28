@@ -50,7 +50,7 @@ a { color:inherit; text-decoration:none } a:hover { color:var(--accent-ink); tex
 .top h1 span { color:var(--muted); font-weight:500 }
 .top .spacer { flex:1 }
 .status { font-size:12px; color:var(--muted); display:inline-flex; align-items:center; gap:8px } .status.err { color:var(--bad) }
-.feed { font-size:12px; color:var(--muted); display:inline-flex; align-items:center; gap:6px } .feed::before { content:""; width:8px; height:8px; border-radius:50%; background:var(--rule) } .feed.live::before { background:var(--good) } .feed.err::before { background:var(--bad) } .feed.connecting::before, .feed.reconnecting::before, .feed.waiting::before { background:var(--accent) }
+.feed { font-size:12px; color:var(--muted); display:inline-flex; align-items:center; gap:6px } .feed[hidden] { display:none } a.upstream { color:var(--warn); font-weight:600 } a.upstream::before { background:var(--warn) } a.upstream:hover { text-decoration:underline } .feed::before { content:""; width:8px; height:8px; border-radius:50%; background:var(--rule) } .feed.live::before { background:var(--good) } .feed.err::before { background:var(--bad) } .feed.connecting::before, .feed.reconnecting::before, .feed.waiting::before { background:var(--accent) }
 .status.busy::before { content:""; width:12px; height:12px; border-radius:50%; border:2px solid var(--rule); border-top-color:var(--accent); animation:spin .8s linear infinite }
 @keyframes spin { to { transform:rotate(360deg) } }
 .hdrcounts { display:flex; gap:18px; font-size:13px; color:var(--ink2) }
@@ -258,6 +258,7 @@ table { table-layout:fixed } th:first-child, td:first-child { width:auto } td.nu
     <div class="spacer"></div>
     <span id="status" class="status busy">Loading</span>
     <span id="feed" class="feed" hidden>Live</span>
+    <a id="upstream" class="feed upstream" hidden target="_blank"></a>
     <div class="segs" id="theme"><button data-t="dark" aria-pressed="true">Dark</button><button data-t="light">Light</button></div>
     <button id="refresh">Refresh</button>
     <button id="signout" style="display:none">Sign out</button>
@@ -394,6 +395,15 @@ $("#repoBtn").onclick = () => $("#repoPanel").classList.toggle("open");
 document.addEventListener("click", (e) => { if (!$("#repoMenu").contains(e.target)) $("#repoPanel").classList.remove("open"); });
 
 let live = null, daily = null, quota = null;
+async function loadUpstream() {
+  const el = $("#upstream");
+  try {
+    const d = await api("/api/upstream");
+    if (!d.available || !d.ahead) { el.hidden = true; return; }
+    el.hidden = false; el.href = d.url; el.textContent = `Upstream +${d.ahead}`;
+    el.title = `${d.upstream} has ${d.ahead} commit${d.ahead === 1 ? "" : "s"} your fork does not${d.behind ? `; your fork has ${d.behind} it does not` : ""}:\n` + d.commits.map((x) => `${x.sha} ${x.title} (${x.author}, ${ago(x.at)} ago)`).join("\n") + `\n\ngit fetch upstream && git merge upstream/main`;
+  } catch (e) { el.hidden = true; console.warn("upstream:", e.message); }
+}
 const untilText = (iso) => { if (!iso) return ""; const mins = Math.round((new Date(iso) - Date.now()) / 60000); if (mins <= 0) return "resetting"; const h = Math.floor(mins / 60), m = mins % 60; return h >= 48 ? `${Math.floor(h / 24)}d ${h % 24}h` : h ? `${h}h ${String(m).padStart(2, "0")}m` : `${m}m`; };
 const whenText = (iso) => { if (!iso) return ""; const d = new Date(iso), sameDay = dayKey(d) === today(); return d.toLocaleString([], sameDay ? { hour: "numeric", minute: "2-digit" } : { weekday: "short", hour: "numeric", minute: "2-digit" }); };
 async function loadQuota(force) {
@@ -678,7 +688,7 @@ async function start() {
   $("#signin").classList.remove("open");
   $("#who").textContent = st.login;
   $("#signout").style.display = st.owner ? "none" : "";
-  if (st.owner) { loadRepos(); loadQuota(); setInterval(loadQuota, 5 * 60 * 1000); }
+  if (st.owner) { loadRepos(); loadQuota(); setInterval(loadQuota, 5 * 60 * 1000); loadUpstream(); setInterval(loadUpstream, 30 * 60 * 1000); }
   loadLive(); loadDaily();
   setInterval(loadLive, 2 * 60 * 1000);
   setInterval(() => loadDaily(false), 5 * 60 * 1000);

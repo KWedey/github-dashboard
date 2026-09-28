@@ -4,7 +4,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { execFile, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { demoDaily, demoLive, demoQuota, demoRepos } from "./demo.mjs";
+import { demoDaily, demoLive, demoQuota, demoRepos, demoUpstream } from "./demo.mjs";
 import { DEFAULT_FEED_URL, coalesceInvalidations, startCadenceFeed } from "./cadence-feed.mjs";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -322,6 +322,30 @@ async function quotaData(force) {
   return { available: true, fetched_at: oldest ? new Date(oldest).toISOString() : null, refreshing: Boolean(quotaRefresh), accounts: [...claude, ...(await codexAccounts(force))] };
 }
 
+// ---------- upstream drift of this dashboard's own repo ----------
+function gitRemote(name) {
+  try {
+    const m = fs.readFileSync(path.join(ROOT, ".git", "config"), "utf8").match(new RegExp(`\\[remote "${name}"\\][^[]*?url\\s*=\\s*(\\S+)`));
+    const u = m && m[1].match(/github\.com[:/]([^/\s]+\/[^/\s]+?)(?:\.git)?$/);
+    return u ? u[1] : null;
+  } catch { return null; }
+}
+const DRIFT_TTL_MS = 30 * 60 * 1000;
+let drift = { at: 0, data: null };
+async function upstreamDrift(c) {
+  if (Date.now() - drift.at < DRIFT_TTL_MS) return drift.data;
+  const upstream = gitRemote("upstream"), fork = gitRemote("origin");
+  if (!upstream || !fork || upstream.toLowerCase() === fork.toLowerCase()) return (drift = { at: Date.now(), data: { available: false } }).data;
+  try {
+    const [up, fk] = await Promise.all([c.gh(`${API}/repos/${upstream}`), c.gh(`${API}/repos/${fork}`)]);
+    const base = `${fk.owner.login}:${fk.default_branch}`, head = `${up.owner.login}:${up.default_branch}`;
+    const cmp = await c.gh(`${API}/repos/${upstream}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`);
+    drift = { at: Date.now(), data: { available: true, upstream, fork, ahead: cmp.ahead_by, behind: cmp.behind_by, url: `https://github.com/${upstream}/compare/${base}...${head}`,
+      commits: cmp.commits.slice(-10).reverse().map((x) => ({ sha: x.sha.slice(0, 7), title: x.commit.message.split("\n")[0], author: x.author?.login || x.commit.author?.name || "", at: x.commit.committer?.date || null })) } };
+  } catch (e) { console.error("upstream drift:", e.message); drift = { at: Date.now() - DRIFT_TTL_MS + 5 * 60 * 1000, data: { available: false, error: e.message } }; }
+  return drift.data;
+}
+
 // ---------- local repos (owner only) ----------
 const SCAN_ROOTS = (process.env.REPO_ROOTS || "~,~/Studio").split(",").map((r) => r.trim().replace(/^~/, process.env.HOME)).filter(Boolean);
 const SKIP = new Set(["node_modules", "Library", ".worktrees", "worktrees", ".git", "Downloads", "Applications", "Movies", "Music", "Pictures", ...(process.env.REPO_SKIP || "Dropbox (Personal),TrainerRoad Dropbox").split(",").map((x) => x.trim()).filter(Boolean)]);
@@ -398,6 +422,7 @@ const server = http.createServer(async (req, res) => {
       if (url.pathname === "/api/live") return send(res, 200, demoLive(today()));
       if (url.pathname === "/api/repos") return send(res, 200, { repos: demoRepos });
       if (url.pathname === "/api/quota") return send(res, 200, demoQuota());
+      if (url.pathname === "/api/upstream") return send(res, 200, demoUpstream());
       if (url.pathname === "/api/events") return openBrowserStream(req, res, "octocat");
       if (url.pathname === "/api/daily") {
         const to = url.searchParams.get("to") || today(), from = url.searchParams.get("from") || to, days = daysBetween(from, to);
@@ -441,6 +466,7 @@ const server = http.createServer(async (req, res) => {
       if (url.pathname === "/api/me") return send(res, 200, { login: await c.me(), owner: Boolean(s.owner) });
       if (url.pathname === "/api/repos") return send(res, 200, { repos: s.owner ? localRepos() : [] });
       if (url.pathname === "/api/quota") return send(res, 200, s.owner ? await quotaData(url.searchParams.get("force") === "1") : { available: false });
+      if (url.pathname === "/api/upstream") return send(res, 200, s.owner ? await upstreamDrift(c) : { available: false });
       if (url.pathname === "/api/daily") {
         const to = url.searchParams.get("to") || today(), from = url.searchParams.get("from") || to;
         if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) return send(res, 400, { error: "bad range" });
