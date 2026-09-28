@@ -206,19 +206,21 @@ async function searchAll(c, q, fragment) {
 const ISSUE_FRAG = `... on Issue { number title url createdAt updatedAt bodyText comments{ totalCount } repository{ nameWithOwner } labels(first:10){ nodes{ name color } } milestone{ title }
   linkedPrs: closedByPullRequestsReferences(first:10, includeClosedPrs:false){ nodes{ number url isDraft state repository{ nameWithOwner } } } }`;
 const PR_FRAG = `... on PullRequest { number title url createdAt updatedAt isDraft reviewDecision mergeable headRefName baseRefName additions deletions author{ login } repository{ nameWithOwner }
-  labels(first:30){ nodes{ name color } } assignees(first:10){ nodes{ login } } statusCheckRollup{ state } closingIssuesReferences(first:5){ nodes{ number title url } }
+  labels(first:30){ nodes{ name color } } assignees(first:10){ nodes{ login } } statusCheckRollup{ state }
+  latestReviews(first:20){ nodes{ author{ login } state submittedAt } } commits(last:1){ nodes{ commit{ committedDate } } } closingIssuesReferences(first:5){ nodes{ number title url } }
   reviewRequests(first:5){ nodes{ requestedReviewer{ ... on User{ login } ... on Team{ name } } } } }`;
 function firstLine(text) {
   const line = (text || "").split("\n").map((l) => l.trim()).find((l) => l.length > 20 && !/^#|^\*\*|^[-*] |^\[/.test(l)) || "";
   return line.length > 180 ? line.slice(0, 177).replace(/\s+\S*$/, "") + "…" : line;
 }
 function slimPr(n) {
-  return { repo: n.repository.nameWithOwner, number: n.number, title: n.title, url: n.url, author: n.author?.login || null, created_at: n.createdAt, updated_at: n.updatedAt, draft: n.isDraft, reviewDecision: n.reviewDecision, mergeable: n.mergeable, checks: n.statusCheckRollup?.state || null, head: n.headRefName, base: n.baseRefName, additions: n.additions, deletions: n.deletions, labels: n.labels.nodes, assignees: n.assignees.nodes.map((a) => a.login), closes: n.closingIssuesReferences.nodes, reviewers: n.reviewRequests.nodes.map((r) => r.requestedReviewer?.login || r.requestedReviewer?.name).filter(Boolean) };
+  return { repo: n.repository.nameWithOwner, number: n.number, title: n.title, url: n.url, author: n.author?.login || null, created_at: n.createdAt, updated_at: n.updatedAt, draft: n.isDraft, reviewDecision: n.reviewDecision, mergeable: n.mergeable, checks: n.statusCheckRollup?.state || null, head: n.headRefName, base: n.baseRefName, additions: n.additions, deletions: n.deletions, labels: n.labels.nodes, assignees: n.assignees.nodes.map((a) => a.login), reviews: (n.latestReviews?.nodes || []).map((r) => ({ by: r.author?.login || null, state: r.state, at: r.submittedAt })), pushed_at: n.commits?.nodes[0]?.commit.committedDate || null, closes: n.closingIssuesReferences.nodes, reviewers: n.reviewRequests.nodes.map((r) => r.requestedReviewer?.login || r.requestedReviewer?.name).filter(Boolean) };
 }
 function slimIssue(n) {
   return { repo: n.repository.nameWithOwner, number: n.number, title: n.title, url: n.url, created_at: n.createdAt, updated_at: n.updatedAt, labels: n.labels.nodes, comments: n.comments.totalCount, why: firstLine(n.bodyText), milestone: n.milestone?.title || null, linkedPrs: n.linkedPrs.nodes.map((p) => ({ repo: p.repository.nameWithOwner, number: p.number, url: p.url, draft: p.isDraft, state: p.state })) };
 }
 const QUEUES = { needsCodeReview: "Needs Code Review", needsTesting: "Needs Testing" };
+const REVIEW_AUTHORS = (process.env.REVIEW_AUTHORS || "RileyPascal,justib99,PaulDeister,reynaldotr").split(",").map((x) => x.trim()).filter(Boolean);
 async function queueScope(c) {
   const user = await c.me();
   if (!c.orgs) c.orgs = (await c.gh(`${API}/user/orgs?per_page=100`)).map((o) => o.login);
@@ -234,7 +236,7 @@ async function liveData(c) {
     searchAll(c, `${scope} is:pr is:open label:"${QUEUES.needsCodeReview}"`, PR_FRAG),
     searchAll(c, `${scope} is:pr is:open label:"${QUEUES.needsTesting}"`, PR_FRAG),
   ]);
-  return { user, fetchedAt: new Date().toISOString(), issues: issues.map(slimIssue), prs: prs.map(slimPr), reviewRequests: reviewRequests.map(slimPr), needsCodeReview: needsCodeReview.map(slimPr), needsTesting: needsTesting.map(slimPr) };
+  return { user, fetchedAt: new Date().toISOString(), reviewAuthors: REVIEW_AUTHORS, issues: issues.map(slimIssue), prs: prs.map(slimPr), reviewRequests: reviewRequests.map(slimPr), needsCodeReview: needsCodeReview.map(slimPr), needsTesting: needsTesting.map(slimPr) };
 }
 
 // ---------- local repos (owner only) ----------

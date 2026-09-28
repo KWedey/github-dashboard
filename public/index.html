@@ -447,8 +447,7 @@ function renderLive() {
   document.querySelectorAll("#prFilter button").forEach((b) => { b.setAttribute("aria-pressed", b.dataset.f === listFilter.prs); b.textContent = `${{all:"All",open:"Open",merged:"Merged"}[b.dataset.f]} ${prSets[b.dataset.f].length}`; });
   const allIssues = live.issues.filter((i) => visible(i.repo)), allPrs = live.prs.filter((p) => visible(p.repo));
   const allCr = live.needsCodeReview.filter((p) => visible(p.repo)), allQa = live.needsTesting.filter((p) => visible(p.repo));
-  const requested = new Set(live.reviewRequests.map(itemKey)), askedOfMe = (p) => requested.has(itemKey(p)) || p.assignees.includes(live.user);
-  $("#hdrCounts").innerHTML = `<a href="#issues"><b>${allIssues.length}</b>issues, ${allIssues.filter(inflightIssue).length} in flight</a><a href="#prs"><b>${allPrs.length}</b>PRs, ${allPrs.filter((p) => !p.draft).length} in review</a><a href="#codeReview"><b>${allCr.filter(askedOfMe).length}</b>for me to review, ${allCr.length} queued</a><a href="#testing"><b>${allQa.filter(askedOfMe).length}</b>for me to test, ${allQa.length} queued</a>`;
+  $("#hdrCounts").innerHTML = `<a href="#issues"><b>${allIssues.length}</b>issues, ${allIssues.filter(inflightIssue).length} in flight</a><a href="#prs"><b>${allPrs.length}</b>PRs, ${allPrs.filter((p) => !p.draft).length} in review</a><a href="#codeReview"><b>${allCr.filter(reviewForMe).length}</b>for me to review, ${allCr.length} queued</a><a href="#testing"><b>${allQa.filter(askedOfMe).length}</b>for me to test, ${allQa.length} queued</a>`;
   $("#issueCount").textContent = issueSets[listFilter.issues].length; $("#prCount").textContent = prSets[listFilter.prs].length;
   if (!daily) $("#status").textContent = "Loading activity";
   const prs = prSets[listFilter.prs];
@@ -458,20 +457,26 @@ function renderLive() {
   const rr = live.reviewRequests.filter((p) => visible(p.repo));
   $("#rrSummary").textContent = `Waiting on my review (${rr.length})`;
   $("#rrList").innerHTML = rr.length ? prTable(rr) : `<div class="empty">No review requests.</div>`;
-  renderQueue(live.needsCodeReview, "codeReview", "cr", "needs code review", "review", win, winLabel);
-  renderQueue(live.needsTesting, "testing", "qa", "needs testing", "test", win, winLabel);
+  renderQueue(live.needsCodeReview, "codeReview", "cr", "needs code review", "review", reviewForMe, win, winLabel);
+  renderQueue(live.needsTesting, "testing", "qa", "needs testing", "test", askedOfMe, win, winLabel);
 }
-function renderQueue(all, key, id, label, verb, win, winLabel) {
+const requestedOfMe = (p) => live.reviewRequests.some((r) => itemKey(r) === itemKey(p));
+const askedOfMe = (p) => requestedOfMe(p) || p.assignees.includes(live.user);
+function ballInAuthorsCourt(p) {
+  if (p.draft || p.mergeable === "CONFLICTING" || p.checks === "FAILURE" || p.checks === "ERROR" || p.reviewDecision === "CHANGES_REQUESTED") return true;
+  const mine = (p.reviews || []).find((r) => r.by === live.user);
+  return Boolean(mine && mine.state !== "APPROVED" && p.pushed_at && mine.at > p.pushed_at);
+}
+const reviewForMe = (p) => (requestedOfMe(p) || live.reviewAuthors.includes(p.author)) && !ballInAuthorsCourt(p);
+function renderQueue(all, key, id, label, verb, forMe, win, winLabel) {
   const rows = all.filter((p) => visible(p.repo) && (!winOnly[key] || inWindow(p.updated_at, win))).sort((a,b) => a.updated_at.localeCompare(b.updated_at));
-  const requested = new Set(live.reviewRequests.map(itemKey));
-  const forMe = (p) => requested.has(itemKey(p)) || p.assignees.includes(live.user);
   const sets = { forMe: rows.filter(forMe), all: rows, mine: rows.filter((p) => p.author === live.user) };
   const oldest = sets.forMe.length ? ago(sets.forMe[0].updated_at) : null;
   $(`#${id}Sub`).textContent = winOnly[key] ? `${winLabel}: queued PRs updated in window, oldest first` : `${sets.forMe.length} asked of me${oldest ? `, longest waiting ${oldest}` : ""}, ${sets.mine.length} mine, ${rows.length} in the queue`;
   document.querySelectorAll(`#${id}Filter button`).forEach((b) => { b.setAttribute("aria-pressed", b.dataset.f === listFilter[key]); b.textContent = `${{forMe:"For me",all:"All",mine:"Mine"}[b.dataset.f]} ${sets[b.dataset.f].length}`; });
   const shown = sets[listFilter[key]];
   $(`#${id}Count`).textContent = shown.length;
-  $(`#${id}List`).innerHTML = shown.length ? prTable(shown, { author: true, hideLabel: label }) : `<div class="empty">${listFilter[key] === "forMe" ? `Nothing asked of me to ${verb}: no PR in this queue has me as a requested reviewer or assignee.` : `Nothing waiting to ${verb} in the selected repos.`}</div>`;
+  $(`#${id}List`).innerHTML = shown.length ? prTable(shown, { author: true, hideLabel: label }) : `<div class="empty">${listFilter[key] === "forMe" ? `Nothing for me to ${verb} right now.` : `Nothing waiting to ${verb} in the selected repos.`}</div>`;
 }
 const QUEUE_LABELS = new Set(["needs testing", "needs code review"]);
 function prTable(prs, { author = false, hideLabel = null } = {}) {
