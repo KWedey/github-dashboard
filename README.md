@@ -40,7 +40,7 @@ The feed is an invalidation signal, never the source of truth: a delivery naming
 
 - Assigned issues: `assignee:me is:issue is:open`. In-flight = has an open linked PR.
 - My open PRs: `author:me is:pr is:open`. In review = not draft.
-- Needs code review / Needs testing: open PRs labelled `Needs Code Review` / `Needs Testing` in your repos and every org you belong to, oldest update first. Mine = authored by me. For me on Needs testing = I am a requested reviewer (directly or via a team) or an assignee. For me on Needs code review = I am a requested reviewer or the author is in `REVIEW_AUTHORS`, and the ball is not in the author's court: not a draft, no outstanding changes-requested, and no non-approving review of mine newer than their last push.
+- Needs code review / Needs testing: open PRs labelled `Needs Code Review` / `Needs Testing` in your repos and every org you belong to, oldest update first. Mine = authored by me. For me on Needs testing = not authored by me, fewer than two approving reviews from the test team, none of them mine, and not (one test-team approval with another tester already assigned). Ordered High Priority, then Stale, then one sign-off with nobody else assigned, then the rest, oldest update first within each. For me on Needs code review = I am a requested reviewer or the author is in `REVIEW_AUTHORS`, and the ball is not in the author's court: not a draft, no outstanding changes-requested, and no non-approving review of mine newer than their last push.
 - Waiting on my review: `review-requested:me is:pr is:open`.
 - Issues opened: created by me that day. Issues closed: assigned to me, closed that day.
 - PRs opened / merged: authored by me.
@@ -53,6 +53,7 @@ The feed is an invalidation signal, never the source of truth: a delivery naming
 - `GITHUB_CLIENT_ID` for one-click device-flow sign-in.
 - `CADENCE_FEED_KEY` (and `CADENCE_FEED_URL`) for live refresh from Cadence's webhook feed, above.
 - `REVIEW_AUTHORS=login,login` authors whose PRs count as "for me" in Needs code review even without a review request (default: the TrainerRoad dev team).
+- `TEST_TEAM=test-team` the org team slug whose members count as testers; `TESTERS=login,login` overrides the lookup.
 - `REPO_ROOTS=~,~/Studio` comma-separated folders scanned for local clones (depth 6).
 - `REPO_SKIP=Dropbox (Personal),TrainerRoad Dropbox` extra folder names to skip while scanning.
 

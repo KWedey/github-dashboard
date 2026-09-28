@@ -221,6 +221,20 @@ function slimIssue(n) {
 }
 const QUEUES = { needsCodeReview: "Needs Code Review", needsTesting: "Needs Testing" };
 const REVIEW_AUTHORS = (process.env.REVIEW_AUTHORS || "RileyPascal,justib99,PaulDeister,reynaldotr").split(",").map((x) => x.trim()).filter(Boolean);
+const TEST_TEAM = process.env.TEST_TEAM || "test-team";
+const TESTERS = (process.env.TESTERS || "").split(",").map((x) => x.trim()).filter(Boolean);
+async function testers(c) {
+  if (TESTERS.length) return TESTERS;
+  if (!c.testers) {
+    const found = new Set();
+    for (const org of c.orgs) {
+      try { for (const m of await c.gh(`${API}/orgs/${org}/teams/${TEST_TEAM}/members?per_page=100`)) found.add(m.login); }
+      catch (e) { console.log(`no ${org}/${TEST_TEAM} team for ${c.login}: ${e.message}`); }
+    }
+    c.testers = [...found];
+  }
+  return c.testers;
+}
 async function queueScope(c) {
   const user = await c.me();
   if (!c.orgs) c.orgs = (await c.gh(`${API}/user/orgs?per_page=100`)).map((o) => o.login);
@@ -236,7 +250,7 @@ async function liveData(c) {
     searchAll(c, `${scope} is:pr is:open label:"${QUEUES.needsCodeReview}"`, PR_FRAG),
     searchAll(c, `${scope} is:pr is:open label:"${QUEUES.needsTesting}"`, PR_FRAG),
   ]);
-  return { user, fetchedAt: new Date().toISOString(), reviewAuthors: REVIEW_AUTHORS, issues: issues.map(slimIssue), prs: prs.map(slimPr), reviewRequests: reviewRequests.map(slimPr), needsCodeReview: needsCodeReview.map(slimPr), needsTesting: needsTesting.map(slimPr) };
+  return { user, fetchedAt: new Date().toISOString(), reviewAuthors: REVIEW_AUTHORS, testers: await testers(c), issues: issues.map(slimIssue), prs: prs.map(slimPr), reviewRequests: reviewRequests.map(slimPr), needsCodeReview: needsCodeReview.map(slimPr), needsTesting: needsTesting.map(slimPr) };
 }
 
 // ---------- local repos (owner only) ----------
