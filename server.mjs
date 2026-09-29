@@ -6,6 +6,7 @@ import { execFile, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { demoDaily, demoLive, demoQuota, demoRepos, demoUpstream } from "./demo.mjs";
 import { DEFAULT_FEED_URL, coalesceInvalidations, startCadenceFeed } from "./cadence-feed.mjs";
+import { latestLabelTimes } from "./label-times.mjs";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 4747);
@@ -208,13 +209,14 @@ const ISSUE_FRAG = `... on Issue { number title url createdAt updatedAt bodyText
 const PR_FRAG = `... on PullRequest { number title url createdAt updatedAt isDraft reviewDecision mergeable headRefName baseRefName additions deletions author{ login } repository{ nameWithOwner }
   labels(first:30){ nodes{ name color } } assignees(first:10){ nodes{ login } } statusCheckRollup{ state }
   latestReviews(first:20){ nodes{ author{ login } state submittedAt } } commits(last:1){ nodes{ commit{ committedDate } } } closingIssuesReferences(first:5){ nodes{ number title url } }
-  reviewRequests(first:5){ nodes{ requestedReviewer{ ... on User{ login } ... on Team{ name } } } } }`;
+  reviewRequests(first:5){ nodes{ requestedReviewer{ ... on User{ login } ... on Team{ name } } } }
+  timelineItems(itemTypes:[LABELED_EVENT], last:50){ nodes{ ... on LabeledEvent{ createdAt label{ name } } } } }`;
 function firstLine(text) {
   const line = (text || "").split("\n").map((l) => l.trim()).find((l) => l.length > 20 && !/^#|^\*\*|^[-*] |^\[/.test(l)) || "";
   return line.length > 180 ? line.slice(0, 177).replace(/\s+\S*$/, "") + "…" : line;
 }
 function slimPr(n) {
-  return { repo: n.repository.nameWithOwner, number: n.number, title: n.title, url: n.url, author: n.author?.login || null, created_at: n.createdAt, updated_at: n.updatedAt, draft: n.isDraft, reviewDecision: n.reviewDecision, mergeable: n.mergeable, checks: n.statusCheckRollup?.state || null, head: n.headRefName, base: n.baseRefName, additions: n.additions, deletions: n.deletions, labels: n.labels.nodes, assignees: n.assignees.nodes.map((a) => a.login), reviews: (n.latestReviews?.nodes || []).map((r) => ({ by: r.author?.login || null, state: r.state, at: r.submittedAt })), pushed_at: n.commits?.nodes[0]?.commit.committedDate || null, closes: n.closingIssuesReferences.nodes, reviewers: n.reviewRequests.nodes.map((r) => r.requestedReviewer?.login || r.requestedReviewer?.name).filter(Boolean) };
+  return { repo: n.repository.nameWithOwner, number: n.number, title: n.title, url: n.url, author: n.author?.login || null, created_at: n.createdAt, updated_at: n.updatedAt, draft: n.isDraft, reviewDecision: n.reviewDecision, mergeable: n.mergeable, checks: n.statusCheckRollup?.state || null, head: n.headRefName, base: n.baseRefName, additions: n.additions, deletions: n.deletions, labels: n.labels.nodes, labeledAt: latestLabelTimes(n.timelineItems?.nodes), assignees: n.assignees.nodes.map((a) => a.login), reviews: (n.latestReviews?.nodes || []).map((r) => ({ by: r.author?.login || null, state: r.state, at: r.submittedAt })), pushed_at: n.commits?.nodes[0]?.commit.committedDate || null, closes: n.closingIssuesReferences.nodes, reviewers: n.reviewRequests.nodes.map((r) => r.requestedReviewer?.login || r.requestedReviewer?.name).filter(Boolean) };
 }
 function slimIssue(n) {
   return { repo: n.repository.nameWithOwner, number: n.number, title: n.title, url: n.url, created_at: n.createdAt, updated_at: n.updatedAt, labels: n.labels.nodes, comments: n.comments.totalCount, why: firstLine(n.bodyText), milestone: n.milestone?.title || null, linkedPrs: n.linkedPrs.nodes.map((p) => ({ repo: p.repository.nameWithOwner, number: p.number, url: p.url, draft: p.isDraft, state: p.state })) };

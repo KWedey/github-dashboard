@@ -523,7 +523,7 @@ function testForMe(p) {
   const signoffs = ttApprovers(p);
   return signoffs.length < 2 && !signoffs.includes(live.user) && !(signoffs.length === 1 && secondTesterAssigned(p));
 }
-const testRank = (p) => hasLabel(p, "high priority") ? 0 : hasLabel(p, "stale") ? 1 : ttApprovers(p).length === 1 && !secondTesterAssigned(p) ? 2 : 3;
+const testRank = (p) => hasLabel(p, "high priority") ? 0 : 1;
 const requestedOfMe = (p) => live.reviewRequests.some((r) => itemKey(r) === itemKey(p));
 function ballInAuthorsCourt(p) {
   if (p.draft || p.reviewDecision === "CHANGES_REQUESTED") return true;
@@ -532,9 +532,10 @@ function ballInAuthorsCourt(p) {
 }
 const reviewForMe = (p) => (requestedOfMe(p) || live.reviewAuthors.includes(p.author)) && !ballInAuthorsCourt(p);
 function renderQueue(all, key, id, label, verb, forMe, win, winLabel, rank = () => 0) {
-  const rows = all.filter((p) => visible(p.repo) && (!winOnly[key] || inWindow(p.updated_at, win))).sort((a,b) => rank(a) - rank(b) || a.updated_at.localeCompare(b.updated_at));
+  const queuedAt = (p) => p.labeledAt?.[label] || p.created_at;
+  const rows = all.filter((p) => visible(p.repo) && (!winOnly[key] || inWindow(p.updated_at, win))).sort((a,b) => rank(a) - rank(b) || queuedAt(a).localeCompare(queuedAt(b)));
   const sets = { forMe: rows.filter(forMe), all: rows, mine: rows.filter((p) => p.author === live.user) };
-  const oldest = sets.forMe.length ? ago([...sets.forMe].sort((a,b) => a.updated_at.localeCompare(b.updated_at))[0].updated_at) : null;
+  const oldest = sets.forMe.length ? ago(queuedAt([...sets.forMe].sort((a,b) => queuedAt(a).localeCompare(queuedAt(b)))[0])) : null;
   $(`#${id}Sub`).textContent = winOnly[key] ? `${winLabel}: queued PRs updated in window` : `${sets.forMe.length} for me${oldest ? `, longest waiting ${oldest}` : ""}, ${sets.mine.length} mine, ${rows.length} in the queue`;
   document.querySelectorAll(`#${id}Filter button`).forEach((b) => { b.setAttribute("aria-pressed", b.dataset.f === listFilter[key]); b.textContent = `${{forMe:"For me",all:"All",mine:"Mine"}[b.dataset.f]} ${sets[b.dataset.f].length}`; });
   const shown = sets[listFilter[key]];
