@@ -12,6 +12,8 @@ Nothing personal is committed: tokens, sessions, and cached activity live in the
 
 You are signed in automatically on this Mac via `gh auth token`.
 
+To keep it running across reboots and crashes, run `./scripts/install-launchd.sh` once. It starts the server at login and restarts it if it exits. Logs go to `server.log`.
+
 ## Share with others
 
 Others sign in with their own GitHub account and see their own numbers. Their token is stored in `cache/sessions.json` on this machine (mode 600).
