@@ -41,6 +41,7 @@ body::before { content:""; position:fixed; inset:0; pointer-events:none; z-index
 .wrap { position:relative; z-index:1; padding:0 28px 64px }
 @media (max-width:700px) { .wrap { padding:0 14px 48px } }
 a { color:inherit; text-decoration:none } a:hover { color:var(--accent-ink); text-decoration:underline }
+[hidden] { display:none !important }
 :focus-visible { outline:2px solid var(--focus); outline-offset:2px }
 
 .top { display:flex; align-items:center; gap:14px 18px; padding:20px 0 16px; flex-wrap:wrap }
@@ -50,7 +51,7 @@ a { color:inherit; text-decoration:none } a:hover { color:var(--accent-ink); tex
 .top h1 span { color:var(--muted); font-weight:500 }
 .top .spacer { flex:1 }
 .status { font-size:12px; color:var(--muted); display:inline-flex; align-items:center; gap:8px } .status.err { color:var(--bad) }
-.feed { font-size:12px; color:var(--muted); display:inline-flex; align-items:center; gap:6px } .feed[hidden] { display:none } a.upstream { color:var(--warn); font-weight:600 } a.upstream::before { background:var(--warn) } a.upstream:hover { text-decoration:underline } .feed::before { content:""; width:8px; height:8px; border-radius:50%; background:var(--rule) } .feed.live::before { background:var(--good) } .feed.err::before { background:var(--bad) } .feed.connecting::before, .feed.reconnecting::before, .feed.waiting::before { background:var(--accent) }
+.feed { font-size:12px; color:var(--muted); display:inline-flex; align-items:center; gap:6px } a.upstream { color:var(--warn); font-weight:600 } a.upstream::before { background:var(--warn) } .feed::before { content:""; width:8px; height:8px; border-radius:50%; background:var(--rule) } .feed.live::before { background:var(--good) } .feed.err::before { background:var(--bad) } .feed.connecting::before, .feed.reconnecting::before, .feed.waiting::before { background:var(--accent) }
 .status.busy::before { content:""; width:12px; height:12px; border-radius:50%; border:2px solid var(--rule); border-top-color:var(--accent); animation:spin .8s linear infinite }
 @keyframes spin { to { transform:rotate(360deg) } }
 .hdrcounts { display:flex; gap:18px; font-size:13px; color:var(--ink2) }
@@ -79,7 +80,7 @@ section > header .sub { font-size:12.5px; color:var(--muted) }
 .toolbar { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:16px }
 .toolbar label { font-size:12.5px; color:var(--ink2); display:inline-flex; align-items:center; gap:6px }
 
-#quota { padding-bottom:0 } #quota[hidden] { display:none }
+#quota { padding-bottom:0 }
 .qgrid { display:grid; grid-template-columns:repeat(auto-fill, minmax(300px, 1fr)); gap:10px }
 .qcard { border:1px solid var(--border); border-radius:8px; padding:12px 14px; background:var(--surface); display:grid; gap:9px; min-width:0 }
 .qcard .who { display:flex; align-items:baseline; gap:8px; font-weight:600; font-size:13px; min-width:0 } .qcard .who .email { overflow:hidden; text-overflow:ellipsis; white-space:nowrap } .qcard .who .used { margin-left:auto; font-weight:500; font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em }
@@ -399,9 +400,11 @@ async function loadUpstream() {
   const el = $("#upstream");
   try {
     const d = await api("/api/upstream");
-    if (!d.available || !d.ahead) { el.hidden = true; return; }
-    el.hidden = false; el.href = d.url; el.textContent = `Upstream +${d.ahead}`;
-    el.title = `${d.upstream} has ${d.ahead} commit${d.ahead === 1 ? "" : "s"} your fork does not${d.behind ? `; your fork has ${d.behind} it does not` : ""}:\n` + d.commits.map((x) => `${x.sha} ${x.title} (${x.author}, ${ago(x.at)} ago)`).join("\n") + `\n\ngit fetch upstream && git merge upstream/main`;
+    el.hidden = !d.error && !(d.available && d.ahead); el.classList.toggle("err", Boolean(d.error));
+    if (d.error) { el.removeAttribute("href"); el.textContent = "Upstream ?"; el.title = `Upstream check failed: ${d.error}`; return; }
+    if (el.hidden) return;
+    el.href = d.url; el.textContent = `Upstream +${d.ahead}`;
+    el.title = `${d.upstream} has ${d.ahead} commit${d.ahead === 1 ? "" : "s"} your fork does not${d.behind ? `; your fork has ${d.behind} it does not` : ""}:\n` + d.commits.map((x) => `${x.sha} ${x.title} (${x.author}${x.at ? `, ${ago(x.at)} ago` : ""})`).join("\n") + `\n\ngit fetch upstream && git merge upstream/${d.branch}`;
   } catch (e) { el.hidden = true; console.warn("upstream:", e.message); }
 }
 const untilText = (iso) => { if (!iso) return ""; const mins = Math.round((new Date(iso) - Date.now()) / 60000); if (mins <= 0) return "resetting"; const h = Math.floor(mins / 60), m = mins % 60; return h >= 48 ? `${Math.floor(h / 24)}d ${h % 24}h` : h ? `${h}h ${String(m).padStart(2, "0")}m` : `${m}m`; };

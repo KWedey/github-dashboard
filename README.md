@@ -38,7 +38,7 @@ If [cpa-route](https://github.com/KWedey/dev-environment) is installed, a row at
 
 ## Upstream drift (owner only)
 
-If the dashboard's own clone has an `upstream` remote that differs from `origin`, the header shows an **Upstream +N** pill whenever the upstream default branch has commits your fork's does not. It links to GitHub's compare view; hover it for the newest ten commits and the merge command. Checked every 30 minutes.
+If the dashboard's own clone has an `upstream` remote that differs from `origin`, the header shows an **Upstream +N** pill whenever the upstream default branch has commits your fork's does not. It links to GitHub's compare view; hover it for the newest ten commits and the merge command. Checked every 30 minutes; a failed check shows **Upstream ?** with the error on hover.
 
 ## Demo mode
 
