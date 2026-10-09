@@ -324,7 +324,8 @@ async function quotaData(force) {
 }
 
 // ---------- upstream drift of this dashboard's own repo ----------
-const gitRemote = (name) => new Promise((resolve) => execFile("git", ["-C", ROOT, "remote", "get-url", name], { encoding: "utf8" }, (err, out) => resolve(err ? null : githubSlug(out.trim()))));
+// The ceiling stops git climbing into a parent repo when this folder is not a checkout of its own.
+const gitRemote = (name) => new Promise((resolve) => execFile("git", ["-C", ROOT, "remote", "get-url", name], { encoding: "utf8", env: { ...process.env, GIT_CEILING_DIRECTORIES: path.dirname(ROOT) } }, (err, out) => resolve(err ? null : githubSlug(out.trim()))));
 // Shorter than the page's 30-minute poll, so every poll sees a fresh comparison instead of every other one.
 const DRIFT_TTL_MS = 25 * 60 * 1000;
 let drift = { at: 0, data: null }, driftPending = null;
@@ -332,7 +333,7 @@ async function loadDrift(c) {
   const [upstream, fork] = await Promise.all([gitRemote("upstream"), gitRemote("origin")]);
   if (!upstream || !fork || upstream.toLowerCase() === fork.toLowerCase()) return { at: Date.now(), data: { available: false } };
   try { return { at: Date.now(), data: await compareFork((p) => c.gh(API + p), upstream, fork) }; }
-  catch (e) { console.error("upstream drift:", e.message); return { at: Date.now() - DRIFT_TTL_MS + 5 * 60 * 1000, data: { available: false, error: e.message } }; }
+  catch (e) { console.error("upstream drift:", e.message); return { at: Date.now() - DRIFT_TTL_MS + 5 * 60 * 1000, data: { available: false, error: e.message.split(": {")[0].slice(0, 200) } }; }
 }
 function upstreamDrift(c) {
   if (Date.now() - drift.at < DRIFT_TTL_MS) return drift.data;
