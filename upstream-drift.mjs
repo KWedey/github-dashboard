@@ -1,4 +1,4 @@
-export const githubSlug = (url) => url?.match(/github\.com[:/]([^/\s]+\/[^/\s]+?)(?:\.git)?\/?$/)?.[1] ?? null;
+export const githubSlug = (url) => url?.match(/(?:^|[@/])github\.com[:/]([^/\s]+\/[^/\s]+?)(?:\.git)?\/?$/)?.[1] ?? null;
 
 export async function compareFork(gh, upstream, fork) {
   const [up, fk] = await Promise.all([gh(`/repos/${upstream}`), gh(`/repos/${fork}`)]);
