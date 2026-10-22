@@ -4,8 +4,10 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { createLiveSearch, graphqlError } from "./live-search.mjs";
+import { createLiveSearch } from "./live-search.mjs";
 import { demoDaily, demoLive, demoRepos } from "./demo.mjs";
+import { createGitHub } from "./github.mjs";
+import { createActivity, API, daysBetween, shift, today } from "./activity.mjs";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 4747);
@@ -13,7 +15,6 @@ const HOST = process.env.HOST || "127.0.0.1";
 const CLIENT_ID = process.env.GITHUB_CLIENT_ID || "";
 const CACHE_DIR = path.join(ROOT, "cache");
 const SESSIONS_FILE = path.join(CACHE_DIR, "sessions.json");
-const API = "https://api.github.com";
 const WARM_DAYS = 90;
 const DEMO = process.env.DEMO === "1";
 fs.mkdirSync(CACHE_DIR, { recursive: true });
@@ -22,67 +23,8 @@ fs.mkdirSync(CACHE_DIR, { recursive: true });
 let ownerToken = "";
 try { ownerToken = execFileSync("gh", ["auth", "token"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim(); } catch {}
 
-// ---------- day math (local timezone, midnight to midnight) ----------
-const pad = (n) => String(n).padStart(2, "0");
-const dayKey = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-const localDay = (iso) => dayKey(new Date(iso));
-function startOfDay(key) { const [y, m, d] = key.split("-").map(Number); return new Date(y, m - 1, d, 0, 0, 0, 0); }
-function endOfDay(key) { const [y, m, d] = key.split("-").map(Number); return new Date(y, m - 1, d, 23, 59, 59, 999); }
-function offsetIso(d) {
-  const off = -d.getTimezoneOffset(), sign = off >= 0 ? "+" : "-", a = Math.abs(off);
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}${sign}${pad(Math.floor(a / 60))}:${pad(a % 60)}`;
-}
-function daysBetween(from, to) { const out = []; for (let d = startOfDay(from); d <= startOfDay(to); d.setDate(d.getDate() + 1)) out.push(dayKey(d)); return out; }
-function shift(key, n) { const d = startOfDay(key); d.setDate(d.getDate() + n); return dayKey(d); }
-const today = () => dayKey(new Date());
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-// ---------- per-token GitHub client with rate-limit awareness ----------
-const RESERVE = 12;
-const clients = new Map();
-function client(token) {
-  if (clients.has(token)) return clients.get(token);
-  const c = {
-    headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "github-dashboard-local" },
-    search: { remaining: 30, reset: 0 },
-    userRequests: 0,
-    login: null,
-    async gh(url, init = {}, background = false) {
-      const isSearch = url.includes("/search/");
-      for (let attempt = 0; attempt < 6; attempt++) {
-        if (background && isSearch) {
-          while (c.userRequests > 0 || (c.search.remaining <= RESERVE && c.search.reset > Date.now())) await sleep(250);
-          if (c.search.remaining <= RESERVE) c.search.remaining = 30;
-        }
-        const res = await fetch(url, { ...init, headers: { ...c.headers, ...(init.headers || {}) } });
-        if (isSearch && res.headers.get("x-ratelimit-remaining") !== null) {
-          c.search = { remaining: Number(res.headers.get("x-ratelimit-remaining")), reset: Number(res.headers.get("x-ratelimit-reset")) * 1000 };
-        }
-        if (res.status === 403 || res.status === 429) {
-          const remaining = Number(res.headers.get("x-ratelimit-remaining"));
-          const reset = Number(res.headers.get("x-ratelimit-reset")) * 1000;
-          const retryAfter = Number(res.headers.get("retry-after")) * 1000;
-          const wait = retryAfter || (remaining === 0 && reset ? Math.max(reset - Date.now(), 1000) : 5000);
-          console.log(`[${c.login || "?"}] rate limited; waiting ${Math.round(wait / 1000)}s`);
-          await sleep(wait + 500);
-          continue;
-        }
-        if (res.status === 401) { const e = new Error("GitHub rejected the token"); e.code = 401; throw e; }
-        if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${await res.text()}`);
-        return res.json();
-      }
-      throw new Error(`gave up after retries: ${url}`);
-    },
-    async me() { if (!c.login) c.login = (await c.gh(`${API}/user`)).login; return c.login; },
-    async graphql(query, variables) {
-      const r = await c.gh(`${API}/graphql`, { method: "POST", body: JSON.stringify({ query, variables }) });
-      if (r.errors) throw graphqlError(r.errors);
-      return r.data;
-    },
-  };
-  clients.set(token, c);
-  return c;
-}
+// ---------- per-token GitHub clients (github.mjs) ----------
+const { client, laneFor } = createGitHub({ log: (m) => console.log(m) });
 
 // ---------- sessions ----------
 let sessions = {};
@@ -126,34 +68,6 @@ async function devicePoll(device_code) {
   return { status: "error", error: j.error_description || j.error };
 }
 
-// ---------- metrics ----------
-const METRICS = {
-  issuesOpened: { q: (u) => `author:${u} is:issue`, field: "created", ts: (i) => i.created_at },
-  issuesClosed: { q: (u) => `assignee:${u} is:issue`, field: "closed", ts: (i) => i.closed_at },
-  prsOpened: { q: (u) => `author:${u} is:pr`, field: "created", ts: (i) => i.created_at },
-  prsMerged: { q: (u) => `author:${u} is:pr`, field: "merged", ts: (i) => i.pull_request?.merged_at },
-};
-function slim(i) {
-  return { repo: i.repository_url.replace(`${API}/repos/`, ""), number: i.number, title: i.title, url: i.html_url, state: i.state, state_reason: i.state_reason || null, draft: i.draft || false, created_at: i.created_at, closed_at: i.closed_at, merged_at: i.pull_request?.merged_at || null, is_pr: Boolean(i.pull_request) };
-}
-async function searchRange(c, metric, fromKey, toKey, user, background) {
-  const m = METRICS[metric];
-  const q = `${m.q(user)} ${m.field}:${offsetIso(startOfDay(fromKey))}..${offsetIso(endOfDay(toKey))}`;
-  const first = await c.gh(`${API}/search/issues?q=${encodeURIComponent(q)}&per_page=100&page=1`, {}, background);
-  if (first.total_count > 1000 && fromKey !== toKey) {
-    const days = daysBetween(fromKey, toKey), mid = days[Math.floor(days.length / 2) - 1], next = days[Math.floor(days.length / 2)];
-    const [a, b] = await Promise.all([searchRange(c, metric, fromKey, mid, user, background), searchRange(c, metric, next, toKey, user, background)]);
-    return a.concat(b);
-  }
-  let items = first.items;
-  const pages = Math.min(10, Math.ceil(first.total_count / 100));
-  for (let p = 2; p <= pages; p++) items = items.concat((await c.gh(`${API}/search/issues?q=${encodeURIComponent(q)}&per_page=100&page=${p}`, {}, background)).items);
-  const buckets = {};
-  for (const k of daysBetween(fromKey, toKey)) buckets[k] = [];
-  for (const it of items) { const ts = m.ts(it); if (!ts) continue; const k = localDay(ts); if (buckets[k]) buckets[k].push(slim(it)); }
-  return Object.entries(buckets).map(([day, list]) => ({ day, items: list }));
-}
-
 // ---------- per-user day cache ----------
 const caches = new Map();
 function cacheFor(login) {
@@ -164,35 +78,13 @@ function cacheFor(login) {
   // Legacy files were a bare { "metric:day": items } map with no fetch times; a day
   // from one of those refetches once and is then settled like any other.
   const stored = raw.days && raw.fetchedAt ? raw : { days: raw, fetchedAt: {} };
+  stored.emptyAt ||= {};
   let timer = null;
-  const entry = { data: stored.days, fetchedAt: stored.fetchedAt, save() { clearTimeout(timer); timer = setTimeout(() => fs.writeFileSync(file, JSON.stringify(stored)), 250); } };
+  const entry = { data: stored.days, fetchedAt: stored.fetchedAt, emptyAt: stored.emptyAt, save() { clearTimeout(timer); timer = setTimeout(() => fs.writeFileSync(file, JSON.stringify(stored)), 250); } };
   caches.set(login, entry);
   return entry;
 }
-const inflight = new Map();
-const FRESH_MS = 90 * 1000;
-async function dailyData(c, fromKey, toKey, force, background = false) {
-  const user = await c.me();
-  const cache = cacheFor(user);
-  const tKey = today(), days = daysBetween(fromKey, toKey), out = {};
-  for (const metric of Object.keys(METRICS)) {
-    out[metric] = {};
-    // A past day is reusable only once it was fetched after it ended — otherwise a
-    // day cached mid-evening would keep its partial counts forever.
-    const fresh = (d) => { const at = cache.fetchedAt[`${metric}:${d}`] || 0; return at > 0 && (d < tKey ? at >= endOfDay(d).getTime() : Date.now() - at < FRESH_MS); };
-    const missing = days.filter((d) => force || !(fresh(d) && cache.data[`${metric}:${d}`]));
-    const spans = [];
-    for (const d of missing) { const last = spans[spans.length - 1]; if (last && daysBetween(last[1], d).length === 2) last[1] = d; else spans.push([d, d]); }
-    await Promise.all(spans.map(async ([a, b]) => {
-      const key = `${user}:${metric}:${a}:${b}`;
-      if (!inflight.has(key)) inflight.set(key, searchRange(c, metric, a, b, user, background).finally(() => inflight.delete(key)));
-      for (const { day, items } of await inflight.get(key)) { cache.data[`${metric}:${day}`] = items; cache.fetchedAt[`${metric}:${day}`] = Date.now(); out[metric][day] = items; }
-    }));
-    for (const d of days) if (!out[metric][d]) out[metric][d] = cache.data[`${metric}:${d}`] || [];
-  }
-  cache.save();
-  return { user, from: fromKey, to: toKey, today: tKey, days, metrics: out };
-}
+const { dailyData } = createActivity({ cacheFor, laneFor, log: (m) => console.log(m) });
 
 // ---------- live (GraphQL) ----------
 // Page size, retries and completeness checks live in live-search.mjs. The explicit sort
@@ -262,8 +154,13 @@ async function warm() {
   const tokens = new Set([ownerToken, ...Object.values(sessions).map((s) => s.token)].filter(Boolean));
   for (const token of tokens) {
     const c = client(token);
-    try { const t = today(); await dailyData(c, shift(t, -1), t, true, true); await dailyData(c, shift(t, -(WARM_DAYS - 1)), t, false, true); }
-    catch (e) { console.error(`warm failed for ${c.login || "?"}:`, e.message); }
+    // The two passes fail independently, so a refused yesterday..today refresh still lets
+    // the 90-day pass fill in whatever is missing.
+    const t = today();
+    for (const [from, force, what] of [[shift(t, -1), true, "refresh"], [shift(t, -(WARM_DAYS - 1)), false, "90-day warm"]]) {
+      try { await dailyData(c, from, t, force, true); }
+      catch (e) { console.error(`${what} failed for ${c.login || "?"}:`, e.message); }
+    }
   }
   warming = false;
 }
@@ -271,7 +168,7 @@ if (!DEMO) { setTimeout(warm, 500); setInterval(warm, 5 * 60 * 1000); }
 
 // ---------- http ----------
 const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".json": "application/json" };
-function send(res, code, body, type = "application/json") { res.writeHead(code, { "Content-Type": type, "Cache-Control": "no-store" }); res.end(type.startsWith("application/json") ? JSON.stringify(body) : body); }
+function send(res, code, body, type = "application/json", headers = {}) { res.writeHead(code, { "Content-Type": type, "Cache-Control": "no-store", ...headers }); res.end(type.startsWith("application/json") ? JSON.stringify(body) : body); }
 function readBody(req) { return new Promise((r) => { let s = ""; req.on("data", (d) => (s += d)).on("end", () => r(s)); }); }
 
 const server = http.createServer(async (req, res) => {
@@ -300,7 +197,13 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/api/auth/device/poll" && req.method === "POST") {
       const { device_code } = JSON.parse(await readBody(req) || "{}");
       const r = await devicePoll(device_code);
-      if (r.status === "ok") { const login = await client(r.token).me(); newSession(res, r.token, login); setTimeout(warm, 100); return send(res, 200, { status: "ok", login }); }
+      if (r.status === "ok") {
+        // GitHub has already handed over the token and forgotten the device code, so a rate
+        // limit on reading the login must not lose it; the login is read again on next use.
+        let login = null;
+        try { login = await client(r.token).me(); } catch (e) { if (e.code !== 429) throw e; console.log(`device sign-in: ${e.message}; saving the session without a login`); }
+        newSession(res, r.token, login); setTimeout(warm, 100); return send(res, 200, { status: "ok", login });
+      }
       return send(res, 200, r);
     }
     if (url.pathname === "/api/auth/token" && req.method === "POST") {
@@ -325,8 +228,7 @@ const server = http.createServer(async (req, res) => {
         const to = url.searchParams.get("to") || today(), from = url.searchParams.get("from") || to;
         if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) return send(res, 400, { error: "bad range" });
         if (daysBetween(from, to).length > 366) return send(res, 400, { error: "range over 366 days" });
-        c.userRequests++;
-        try { return send(res, 200, await dailyData(c, from, to, url.searchParams.get("force") === "1")); } finally { c.userRequests--; }
+        return send(res, 200, await laneFor(await c.me()).whileUser(() => dailyData(c, from, to, url.searchParams.get("force") === "1")));
       }
       return send(res, 404, { error: "not found" });
     }
@@ -336,6 +238,10 @@ const server = http.createServer(async (req, res) => {
     if (!file.startsWith(path.join(ROOT, "public")) || !fs.existsSync(file)) return send(res, 404, "not found", "text/plain");
     return send(res, 200, fs.readFileSync(file), MIME[path.extname(file)] || "application/octet-stream");
   } catch (e) {
+    if (e.code === 429) {
+      console.log(`${url.pathname}: ${e.message}`);
+      return send(res, 429, { error: e.message, until: e.until }, "application/json", { "Retry-After": String(Math.max(Math.ceil((e.until - Date.now()) / 1000), 1)) });
+    }
     console.error(e);
     if (e.code === 401) return send(res, 401, { error: "Sign in with GitHub first" });
     return send(res, 500, { error: String(e.message || e) });
