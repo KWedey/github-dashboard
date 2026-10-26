@@ -769,6 +769,8 @@ function followEvents() {
   es.addEventListener("feed", (e) => showFeed(JSON.parse(e.data)));
   es.addEventListener("quota", () => loadQuota());
   es.addEventListener("refresh", () => { clearTimeout(refreshTimer); refreshTimer = setTimeout(() => { loadLive(); loadDaily(false); }, 1500); });
+  // The browser retries a dropped stream by itself, but never one the server refused (say a 429 while it looks up the login).
+  es.onerror = () => { if (es.readyState !== EventSource.CLOSED) return; showFeed({ state: "reconnecting", detail: "The server refused the event stream; trying again in a minute" }); setTimeout(followEvents, 60 * 1000); };
 }
 $("#deviceStart").onclick = async () => {
   try {
