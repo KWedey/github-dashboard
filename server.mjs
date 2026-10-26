@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { demoDaily, demoLive, demoQuota, demoRepos, demoUpstream } from "./demo.mjs";
 import { DEFAULT_FEED_URL, coalesceInvalidations, startCadenceFeed } from "./cadence-feed.mjs";
 import { latestLabelTimes } from "./label-times.mjs";
+import { DEFAULT_SKIP, scanRepos } from "./local-repos.mjs";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 4747);
@@ -350,26 +351,16 @@ async function upstreamDrift(c) {
 
 // ---------- local repos (owner only) ----------
 const SCAN_ROOTS = (process.env.REPO_ROOTS || "~,~/Studio").split(",").map((r) => r.trim().replace(/^~/, process.env.HOME)).filter(Boolean);
-const SKIP = new Set(["node_modules", "Library", ".worktrees", "worktrees", ".git", "Downloads", "Applications", "Movies", "Music", "Pictures", ...(process.env.REPO_SKIP || "Dropbox (Personal),TrainerRoad Dropbox").split(",").map((x) => x.trim()).filter(Boolean)]);
-function remoteRepo(dir) {
-  try {
-    const m = fs.readFileSync(path.join(dir, ".git", "config"), "utf8").match(/\[remote "origin"\][^[]*?url\s*=\s*(\S+)/);
-    const u = m && m[1].match(/github\.com[:/]([^/\s]+\/[^/\s]+?)(?:\.git)?$/);
-    return u ? u[1] : null;
-  } catch { return null; }
-}
-function scanRepos(root, depth, out) {
-  if (depth < 0) return;
-  let entries; try { entries = fs.readdirSync(root, { withFileTypes: true }); } catch { return; }
-  if (entries.some((e) => e.name === ".git")) { const r = remoteRepo(root); if (r) out.set(r.toLowerCase(), { repo: r, path: root }); return; }
-  for (const e of entries) { if (!e.isDirectory() || SKIP.has(e.name) || (e.name.startsWith(".") && root === process.env.HOME)) continue; scanRepos(path.join(root, e.name), depth - 1, out); }
-}
-let localRepoCache = { at: 0, list: [] };
+const SKIP = [...DEFAULT_SKIP, ...(process.env.REPO_SKIP || "Dropbox (Personal),TrainerRoad Dropbox").split(",").map((x) => x.trim()).filter(Boolean)];
+let localRepoCache = { at: 0, list: [] }, repoScan = null;
 function localRepos() {
-  if (Date.now() - localRepoCache.at < 10 * 60 * 1000) return localRepoCache.list;
-  const out = new Map(); for (const r of SCAN_ROOTS) scanRepos(r, 6, out);
-  localRepoCache = { at: Date.now(), list: [...out.values()].sort((a, b) => a.repo.localeCompare(b.repo)) };
-  return localRepoCache.list;
+  if (!repoScan && Date.now() - localRepoCache.at >= 10 * 60 * 1000) {
+    repoScan = scanRepos(SCAN_ROOTS, { home: process.env.HOME, skip: SKIP })
+      .then((list) => { localRepoCache = { at: Date.now(), list }; })
+      .catch((e) => console.error("repo scan failed:", e.message))
+      .finally(() => { repoScan = null; });
+  }
+  return repoScan && !localRepoCache.at ? repoScan.then(() => localRepoCache.list) : localRepoCache.list;
 }
 
 // ---------- browser event stream + Cadence webhook feed ----------
@@ -466,7 +457,7 @@ const server = http.createServer(async (req, res) => {
       if (url.pathname === "/api/live") return send(res, 200, await liveData(c));
       if (url.pathname === "/api/events") return openBrowserStream(req, res, await c.me());
       if (url.pathname === "/api/me") return send(res, 200, { login: await c.me(), owner: Boolean(s.owner) });
-      if (url.pathname === "/api/repos") return send(res, 200, { repos: s.owner ? localRepos() : [] });
+      if (url.pathname === "/api/repos") return send(res, 200, { repos: s.owner ? await localRepos() : [] });
       if (url.pathname === "/api/quota") return send(res, 200, s.owner ? await quotaData(url.searchParams.get("force") === "1") : { available: false });
       if (url.pathname === "/api/upstream") return send(res, 200, s.owner ? await upstreamDrift(c) : { available: false });
       if (url.pathname === "/api/daily") {

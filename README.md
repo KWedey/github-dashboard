@@ -65,7 +65,7 @@ If the dashboard's own clone has an `upstream` remote that differs from `origin`
 - `REVIEW_AUTHORS=login,login` authors whose PRs count as "for me" in Needs code review even without a review request (default: the TrainerRoad dev team).
 - `TEST_TEAM=test-team` the org team slug whose members count as testers; `TESTERS=login,login` overrides the lookup.
 - `REPO_ROOTS=~,~/Studio` comma-separated folders scanned for local clones (depth 6).
-- `REPO_SKIP=Dropbox (Personal),TrainerRoad Dropbox` extra folder names to skip while scanning.
+- `REPO_SKIP=Dropbox (Personal),TrainerRoad Dropbox` extra folder names to skip while scanning. `Desktop` and `Documents` are always skipped: macOS holds them behind a permission prompt the background server can never answer.
 
 ## Data and settings
 
