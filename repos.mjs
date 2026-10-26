@@ -4,6 +4,7 @@
 // so a restarted server answers at once and walks again in the background.
 import fs from "node:fs";
 import path from "node:path";
+import { githubSlug } from "./upstream-drift.mjs";
 
 // Directory reads share Node's four worker threads with DNS lookups, so more at once
 // starves GitHub calls: at 32, a cold-start /user took 9s. Two was the fastest walk too.
@@ -15,9 +16,7 @@ export const DEFAULT_SKIP = ["node_modules", "Library", ".worktrees", "worktrees
 
 async function remoteRepo(dir) {
   try {
-    const m = (await fs.promises.readFile(path.join(dir, ".git", "config"), "utf8")).match(/\[remote "origin"\][^[]*?url\s*=\s*(\S+)/);
-    const u = m && m[1].match(/github\.com[:/]([^/\s]+\/[^/\s]+?)(?:\.git)?$/);
-    return u ? u[1] : null;
+    return githubSlug((await fs.promises.readFile(path.join(dir, ".git", "config"), "utf8")).match(/\[remote "origin"\][^[]*?url\s*=\s*(\S+)/)?.[1]);
   } catch { return null; }
 }
 

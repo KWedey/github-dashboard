@@ -12,6 +12,7 @@ import Dates from "./public/dates.js";
 import { createActivity, API, METRICS, daysBetween, shift, today } from "./activity.mjs";
 import { DEFAULT_FEED_URL, coalesceInvalidations, startCadenceFeed } from "./cadence-feed.mjs";
 import { latestLabelTimes } from "./label-times.mjs";
+import { compareFork, githubSlug } from "./upstream-drift.mjs";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const { MAX_RANGE_DAYS } = Dates;
@@ -242,27 +243,20 @@ async function quotaData(force) {
 }
 
 // ---------- upstream drift of this dashboard's own repo ----------
-function gitRemote(name) {
-  try {
-    const m = fs.readFileSync(path.join(ROOT, ".git", "config"), "utf8").match(new RegExp(`\\[remote "${name}"\\][^[]*?url\\s*=\\s*(\\S+)`));
-    const u = m && m[1].match(/github\.com[:/]([^/\s]+\/[^/\s]+?)(?:\.git)?$/);
-    return u ? u[1] : null;
-  } catch { return null; }
+// The ceiling stops git climbing into a parent repo when this folder is not a checkout of its own.
+const gitRemote = (name) => new Promise((resolve) => execFile("git", ["-C", ROOT, "remote", "get-url", name], { encoding: "utf8", env: { ...process.env, GIT_CEILING_DIRECTORIES: path.dirname(ROOT) } }, (err, out) => resolve(err ? null : githubSlug(out.trim()))));
+// Shorter than the page's 30-minute poll, so every poll sees a fresh comparison instead of every other one.
+const DRIFT_TTL_MS = 25 * 60 * 1000;
+let drift = { at: 0, data: null }, driftPending = null;
+async function loadDrift(c) {
+  const [upstream, fork] = await Promise.all([gitRemote("upstream"), gitRemote("origin")]);
+  if (!upstream || !fork || upstream.toLowerCase() === fork.toLowerCase()) return { at: Date.now(), data: { available: false } };
+  try { return { at: Date.now(), data: await compareFork((p) => c.gh(API + p), upstream, fork) }; }
+  catch (e) { console.error("upstream drift:", e.message); return { at: Date.now() - DRIFT_TTL_MS + 5 * 60 * 1000, data: { available: false, error: e.message.split(": {")[0].slice(0, 200) } }; }
 }
-const DRIFT_TTL_MS = 30 * 60 * 1000;
-let drift = { at: 0, data: null };
-async function upstreamDrift(c) {
+function upstreamDrift(c) {
   if (Date.now() - drift.at < DRIFT_TTL_MS) return drift.data;
-  const upstream = gitRemote("upstream"), fork = gitRemote("origin");
-  if (!upstream || !fork || upstream.toLowerCase() === fork.toLowerCase()) return (drift = { at: Date.now(), data: { available: false } }).data;
-  try {
-    const [up, fk] = await Promise.all([c.gh(`${API}/repos/${upstream}`), c.gh(`${API}/repos/${fork}`)]);
-    const base = `${fk.owner.login}:${fk.default_branch}`, head = `${up.owner.login}:${up.default_branch}`;
-    const cmp = await c.gh(`${API}/repos/${upstream}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`);
-    drift = { at: Date.now(), data: { available: true, upstream, fork, ahead: cmp.ahead_by, behind: cmp.behind_by, url: `https://github.com/${upstream}/compare/${base}...${head}`,
-      commits: cmp.commits.slice(-10).reverse().map((x) => ({ sha: x.sha.slice(0, 7), title: x.commit.message.split("\n")[0], author: x.author?.login || x.commit.author?.name || "", at: x.commit.committer?.date || null })) } };
-  } catch (e) { console.error("upstream drift:", e.message); drift = { at: Date.now() - DRIFT_TTL_MS + 5 * 60 * 1000, data: { available: false, error: e.message } }; }
-  return drift.data;
+  return (driftPending ||= loadDrift(c).then((d) => (drift = d).data).finally(() => { driftPending = null; }));
 }
 
 // ---------- local repos (owner only, repos.mjs) ----------

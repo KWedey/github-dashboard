@@ -52,6 +52,6 @@ export function demoQuota() {
 }
 
 export function demoUpstream() {
-  return { available: true, upstream: "acme/github-dashboard", fork: "octocat/github-dashboard", ahead: 2, behind: 3, url: "https://github.com/acme/github-dashboard/compare/octocat:main...acme:main",
+  return { available: true, upstream: "acme/github-dashboard", fork: "octocat/github-dashboard", branch: "main", ahead: 2, behind: 3, url: "https://github.com/acme/github-dashboard/compare/octocat:github-dashboard:main...acme:github-dashboard:main",
     commits: [{ sha: "ee852cd", title: "Link each list to the matching GitHub search", author: "mona", at: new Date(Date.now() - 3600 * 1000).toISOString() }, { sha: "1b10a00", title: "Pickup order: Refresh list button", author: "mona", at: new Date(Date.now() - 86400 * 1000).toISOString() }] };
 }
