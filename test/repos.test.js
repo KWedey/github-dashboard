@@ -70,7 +70,10 @@ test("answers from the saved list at once, and walks again in the background onc
   finish([{ repo: "acme/new", path: "/y" }]);
   await new Promise((r) => setTimeout(r, 20));
   assert.deepEqual((await stale.list()).map((r) => r.repo), ["acme/new"]);
-  assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).list[0].repo, "acme/new", "and saved for the next start");
+  // The save is a background write, so a fixed wait raced it under load and read a half-written file.
+  const saved = () => { try { return JSON.parse(fs.readFileSync(file, "utf8")).list[0].repo; } catch { return null; } };
+  for (const deadline = Date.now() + 2000; saved() !== "acme/new" && Date.now() < deadline;) await new Promise((r) => setTimeout(r, 10));
+  assert.equal(saved(), "acme/new", "and saved for the next start");
 });
 
 test("with nothing saved, the first ask waits for the walk", async () => {
