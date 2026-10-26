@@ -573,6 +573,8 @@ function renderLive() {
   $("#rrList").innerHTML = rr.length ? prTable(rr) : `<div class="empty">No review requests.</div>`;
   renderQueue(live.needsCodeReview, "codeReview", "cr", "needs code review", "review", reviewForMe, win, winLabel);
   renderQueue(live.needsTesting, "testing", "qa", "needs testing", "test", testForMe, win, winLabel, testRank);
+  const STALE_SUB = { issues: "#issueSub", prs: "#prSub", reviewRequests: "#rrSummary", needsCodeReview: "#crSub", needsTesting: "#qaSub" };
+  for (const key of live.stale || []) $(STALE_SUB[key]).textContent += " · saved copy: GitHub search answered wrong, trying again next refresh";
 }
 const hasLabel = (p, name) => (p.labels || []).some((l) => l.name.toLowerCase() === name);
 const ttApprovers = (p) => (p.reviews || []).filter((r) => r.state === "APPROVED" && live.testers.includes(r.by)).map((r) => r.by);

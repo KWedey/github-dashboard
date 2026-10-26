@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { paginateSearch, createLiveSearch, graphqlError, isGitHubQueryFailure, PAGE_SIZE, MIN_PAGE_SIZE, EMPTY_RETRIES, RESULT_LIMIT } = require("../live-search.mjs");
+const { paginateSearch, createLiveSearch, orSaved, graphqlError, isGitHubQueryFailure, PAGE_SIZE, MIN_PAGE_SIZE, EMPTY_RETRIES, RESULT_LIMIT } = require("../live-search.mjs");
 
 const q = "assignee:me is:issue is:open";
 const items = (n) => Array.from({ length: n }, (_, i) => ({ number: i + 1, url: `https://github.com/o/r/issues/${i + 1}` }));
@@ -192,6 +192,26 @@ test("a list that keeps changing while paging fails rather than returning a gues
   const fetchPage = async (after, first) => { n++; const all = items(n), offset = after ? Number(Buffer.from(after, "base64").toString().split(":")[1]) : 0;
     const nodes = all.slice(offset, offset + first); return { issueCount: n, pageInfo: { hasNextPage: offset + nodes.length < n, endCursor: Buffer.from(`cursor:${offset + nodes.length}`).toString("base64") }, nodes }; };
   await assert.rejects(paginateSearch(fetchPage, { q }), /kept changing while paging/);
+});
+
+test("regression: a list that keeps changing falls back to its saved copy, not failing every list", async () => {
+  // The busy team queues relabel often enough that one of five searches failing took down the whole live load.
+  let n = 30;
+  const fetchPage = async (after, first) => { n++; const all = items(n), offset = after ? Number(Buffer.from(after, "base64").toString().split(":")[1]) : 0;
+    const nodes = all.slice(offset, offset + first); return { issueCount: n, pageInfo: { hasNextPage: offset + nodes.length < n, endCursor: Buffer.from(`cursor:${offset + nodes.length}`).toString("base64") }, nodes }; };
+  const saved = [{ number: 1 }], stale = [];
+  assert.equal(await orSaved(paginateSearch(fetchPage, { q }), saved, (e) => stale.push(e.message)), saved);
+  assert.equal(stale.length, 1);
+  assert.match(stale[0], /kept changing while paging/);
+});
+
+test("orSaved still throws without a saved copy, and for errors that aren't search misbehaving", async () => {
+  const unreliable = Object.assign(new Error("search answered wrong"), { unreliable: true });
+  const signedOut = Object.assign(new Error("GitHub rejected the token"), { code: 401 });
+  const never = () => assert.fail("not stale");
+  await assert.rejects(orSaved(Promise.reject(unreliable), null, never), /answered wrong/);
+  await assert.rejects(orSaved(Promise.reject(signedOut), [{ number: 1 }], never), /rejected the token/);
+  assert.deepEqual(await orSaved(Promise.resolve([{ number: 2 }]), [{ number: 1 }], never), [{ number: 2 }]);
 });
 
 test("overlapping fetches of the same list share one, so they cannot finish out of order", async () => {

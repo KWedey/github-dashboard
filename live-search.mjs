@@ -43,7 +43,7 @@ export function isGitHubQueryFailure(err) {
 // is not logged, because that happens on every poll. `lastCount` is how many results
 // the previous fetch of this list returned.
 export async function paginateSearch(fetchPage, { q, pageSize = PAGE_SIZE, minPageSize = MIN_PAGE_SIZE, emptyRetries = EMPTY_RETRIES, lastCount = 0, log = () => {} }) {
-  const fail = (msg, cause) => new Error(`GitHub search "${q}" ${msg}`, cause ? { cause } : undefined);
+  const fail = (msg, cause) => Object.assign(new Error(`GitHub search "${q}" ${msg}`, cause ? { cause } : undefined), { unreliable: true });
   const out = [], seen = new Set();
   let after = null, size = pageSize, expected = null, empties = 0, dropped = 0, restarts = 0;
   for (;;) {
@@ -115,4 +115,14 @@ export function createLiveSearch() {
     pending.set(key, run);
     return run;
   };
+}
+
+// One list's search misbehaving shows that list's last good copy rather than failing every
+// list. Auth, rate-limit and other errors still throw, as does a list with no saved copy.
+export function orSaved(search, saved, onStale) {
+  return search.catch((e) => {
+    if (!e.unreliable || !saved) throw e;
+    onStale(e);
+    return saved;
+  });
 }

@@ -4,7 +4,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { execFile, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { createLiveSearch } from "./live-search.mjs";
+import { createLiveSearch, orSaved } from "./live-search.mjs";
 import { demoDaily, demoLive, demoQuota, demoRepos, demoUpstream } from "./demo.mjs";
 import { createGitHub } from "./github.mjs";
 import { DEFAULT_SKIP, createRepoScanner } from "./repos.mjs";
@@ -166,14 +166,17 @@ function lastLive(token) {
 async function liveData(c, token) {
   const user = await c.me();
   const scope = await queueScope(c);
+  const prev = lastLive(token), stale = [];
+  const list = (key, q, fragment, slim) => orSaved(searchAll(c, q, fragment).then((nodes) => nodes.map(slim)), prev?.[key],
+    (e) => { stale.push(key); console.log(`${e.message}; showing the saved ${key} list`); });
   const [issues, prs, reviewRequests, needsCodeReview, needsTesting] = await Promise.all([
-    searchAll(c, `assignee:${user} is:issue is:open`, ISSUE_FRAG),
-    searchAll(c, `author:${user} is:pr is:open`, PR_FRAG),
-    searchAll(c, `review-requested:${user} is:pr is:open`, PR_FRAG),
-    searchAll(c, `${scope} is:pr is:open label:"${QUEUES.needsCodeReview}"`, PR_FRAG),
-    searchAll(c, `${scope} is:pr is:open label:"${QUEUES.needsTesting}"`, PR_FRAG),
+    list("issues", `assignee:${user} is:issue is:open`, ISSUE_FRAG, slimIssue),
+    list("prs", `author:${user} is:pr is:open`, PR_FRAG, slimPr),
+    list("reviewRequests", `review-requested:${user} is:pr is:open`, PR_FRAG, slimPr),
+    list("needsCodeReview", `${scope} is:pr is:open label:"${QUEUES.needsCodeReview}"`, PR_FRAG, slimPr),
+    list("needsTesting", `${scope} is:pr is:open label:"${QUEUES.needsTesting}"`, PR_FRAG, slimPr),
   ]);
-  const data = { user, fetchedAt: new Date().toISOString(), reviewAuthors: REVIEW_AUTHORS, testers: await testers(c), issues: issues.map(slimIssue), prs: prs.map(slimPr), reviewRequests: reviewRequests.map(slimPr), needsCodeReview: needsCodeReview.map(slimPr), needsTesting: needsTesting.map(slimPr) };
+  const data = { user, fetchedAt: new Date().toISOString(), reviewAuthors: REVIEW_AUTHORS, testers: await testers(c), issues, prs, reviewRequests, needsCodeReview, needsTesting, stale };
   savedLive.set(token, data);
   fs.promises.writeFile(liveFile(token), JSON.stringify(data), { mode: 0o600 }).catch((e) => console.log(`could not save live lists: ${e.message}`));
   return data;
