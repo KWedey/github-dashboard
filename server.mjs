@@ -134,10 +134,16 @@ async function testers(c) {
   if (TESTERS.length) return TESTERS;
   if (!c.testers) {
     const found = new Set();
+    let settled = true;
     for (const org of c.orgs) {
       try { for (const m of await c.gh(`${API}/orgs/${org}/teams/${TEST_TEAM}/members?per_page=100`)) found.add(m.login); }
-      catch (e) { console.log(`no ${org}/${TEST_TEAM} team for ${c.login}: ${e.message}`); }
+      catch (e) {
+        // No such team, or not visible to this token, stays true; a rate limit or outage is asked again next poll.
+        if (e.status !== 404 && e.status !== 403) settled = false;
+        console.log(`no ${org}/${TEST_TEAM} team for ${c.login}: ${e.message}`);
+      }
     }
+    if (!settled) return [...found];
     c.testers = [...found];
   }
   return c.testers;
