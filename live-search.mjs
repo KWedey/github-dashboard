@@ -117,12 +117,15 @@ export function createLiveSearch() {
   };
 }
 
-// One list's search misbehaving shows that list's last good copy rather than failing every
-// list. Auth, rate-limit and other errors still throw, as does a list with no saved copy.
-export function orSaved(search, saved, onStale) {
+// One list's search misbehaving shows that list's copy from `prev` (the last saved lists)
+// rather than failing every list. Auth, rate-limit and other errors still throw, as does a
+// list with no saved copy. onStale hears when that copy was fetched, which a copy carried
+// over several polls keeps, so a search that never recovers still shows its real age.
+export function orSaved(search, prev, key, onStale) {
   return search.catch((e) => {
+    const saved = prev?.[key];
     if (!e.unreliable || !saved) throw e;
-    onStale(e);
+    onStale(e, prev.stale?.[key] ?? prev.fetchedAt);
     return saved;
   });
 }

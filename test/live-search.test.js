@@ -199,19 +199,50 @@ test("regression: a list that keeps changing falls back to its saved copy, not f
   let n = 30;
   const fetchPage = async (after, first) => { n++; const all = items(n), offset = after ? Number(Buffer.from(after, "base64").toString().split(":")[1]) : 0;
     const nodes = all.slice(offset, offset + first); return { issueCount: n, pageInfo: { hasNextPage: offset + nodes.length < n, endCursor: Buffer.from(`cursor:${offset + nodes.length}`).toString("base64") }, nodes }; };
-  const saved = [{ number: 1 }], stale = [];
-  assert.equal(await orSaved(paginateSearch(fetchPage, { q }), saved, (e) => stale.push(e.message)), saved);
+  const prev = { fetchedAt: "2026-10-26T09:00:00.000Z", issues: [{ number: 1 }] }, stale = [];
+  assert.equal(await orSaved(paginateSearch(fetchPage, { q }), prev, "issues", (e, at) => stale.push([e.message, at])), prev.issues);
   assert.equal(stale.length, 1);
-  assert.match(stale[0], /kept changing while paging/);
+  assert.match(stale[0][0], /kept changing while paging/);
+  assert.equal(stale[0][1], prev.fetchedAt);
 });
 
 test("orSaved still throws without a saved copy, and for errors that aren't search misbehaving", async () => {
   const unreliable = Object.assign(new Error("search answered wrong"), { unreliable: true });
   const signedOut = Object.assign(new Error("GitHub rejected the token"), { code: 401 });
+  const prev = { fetchedAt: "2026-10-26T09:00:00.000Z", issues: [{ number: 1 }] };
   const never = () => assert.fail("not stale");
-  await assert.rejects(orSaved(Promise.reject(unreliable), null, never), /answered wrong/);
-  await assert.rejects(orSaved(Promise.reject(signedOut), [{ number: 1 }], never), /rejected the token/);
-  assert.deepEqual(await orSaved(Promise.resolve([{ number: 2 }]), [{ number: 1 }], never), [{ number: 2 }]);
+  await assert.rejects(orSaved(Promise.reject(unreliable), null, "issues", never), /answered wrong/);
+  await assert.rejects(orSaved(Promise.reject(unreliable), prev, "prs", never), /answered wrong/);
+  await assert.rejects(orSaved(Promise.reject(signedOut), prev, "issues", never), /rejected the token/);
+  assert.deepEqual(await orSaved(Promise.resolve([{ number: 2 }]), prev, "issues", never), [{ number: 2 }]);
+});
+
+test("a rate limit or rejected token reaches the HTTP handler as the same error, even with a saved copy", async () => {
+  const prev = { fetchedAt: "2026-10-26T09:00:00.000Z", issues: [{ number: 1 }] };
+  for (const code of [401, 429]) {
+    const err = Object.assign(new Error(`GitHub ${code}`), { code, until: 123 });
+    const rejected = orSaved(paginateSearch(async () => { throw err; }, { q }), prev, "issues", () => assert.fail("not stale"));
+    await assert.rejects(rejected, (e) => e === err && e.code === code && !e.unreliable);
+  }
+});
+
+test("a list stale over several polls keeps the age of its last good fetch, and a fresh fetch clears it", async () => {
+  // Each poll saves what it showed, and the next poll falls back to that saved file.
+  const changing = Object.assign(new Error("kept changing while paging"), { unreliable: true });
+  const poll = async (prev, at, result) => {
+    const stale = {};
+    const issues = await orSaved(result, prev, "issues", (e, savedAt) => { stale.issues = savedAt; });
+    return { fetchedAt: at, issues, stale };
+  };
+  const t1 = "2026-10-26T09:00:00.000Z", t2 = "2026-10-26T09:05:00.000Z", t3 = "2026-10-26T09:10:00.000Z";
+  const good = await poll(null, t1, Promise.resolve([{ number: 1 }]));
+  assert.deepEqual(good.stale, {});
+  const once = await poll(good, t2, Promise.reject(changing));
+  assert.deepEqual(once, { fetchedAt: t2, issues: [{ number: 1 }], stale: { issues: t1 } });
+  const twice = await poll(once, t3, Promise.reject(changing));
+  assert.deepEqual(twice.stale, { issues: t1 }, "not the time of the poll that last saved it");
+  const recovered = await poll(twice, t3, Promise.resolve([{ number: 2 }]));
+  assert.deepEqual(recovered, { fetchedAt: t3, issues: [{ number: 2 }], stale: {} }, "the saved file's stale list does not carry into a fresh load");
 });
 
 test("overlapping fetches of the same list share one, so they cannot finish out of order", async () => {

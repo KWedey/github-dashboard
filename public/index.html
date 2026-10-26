@@ -574,7 +574,7 @@ function renderLive() {
   renderQueue(live.needsCodeReview, "codeReview", "cr", "needs code review", "review", reviewForMe, win, winLabel);
   renderQueue(live.needsTesting, "testing", "qa", "needs testing", "test", testForMe, win, winLabel, testRank);
   const STALE_SUB = { issues: "#issueSub", prs: "#prSub", reviewRequests: "#rrSummary", needsCodeReview: "#crSub", needsTesting: "#qaSub" };
-  for (const key of live.stale || []) $(STALE_SUB[key]).textContent += " · saved copy: GitHub search answered wrong, trying again next refresh";
+  for (const [key, at] of Object.entries(live.stale || {})) $(STALE_SUB[key]).textContent += ` · showing the copy fetched ${ago(at)} ago: GitHub search answered wrong, trying again next refresh`;
 }
 const hasLabel = (p, name) => (p.labels || []).some((l) => l.name.toLowerCase() === name);
 const ttApprovers = (p) => (p.reviews || []).filter((r) => r.state === "APPROVED" && live.testers.includes(r.by)).map((r) => r.by);
@@ -720,7 +720,7 @@ function renderPickup() {
   const issues = live.issues.filter((i) => visible(i.repo)).map((i) => ({ ...i, zone: zoneFor(i) }));
   const inZone = ZONES.map((_, z) => issues.filter((i) => i.zone === z).sort((a, b) => (b.linkedPrs.length - a.linkedPrs.length) || (b.comments - a.comments) || a.created_at.localeCompare(b.created_at)));
   $("#pickupCount").textContent = issues.length;
-  $("#pickupStamp").textContent = `Fetched ${ago(live.fetchedAt)} ago`;
+  $("#pickupStamp").textContent = `Fetched ${ago(live.stale?.issues || live.fetchedAt)} ago`;
   $("#ramp").innerHTML = ZONES.map((zn, z) => `<i style="flex:${inZone[z].length || 0}; background:${zn.color}" title="${zn.z} ${zn.name}: ${inZone[z].length}"></i>`).join("");
   $("#zonebar").innerHTML = ZONES.map((zn, z) => (z === 0 && !inZone[0].length) ? "" : `<button data-z="${z}" aria-pressed="${zoneFilter === z}" style="--zc:${zn.color}"><i></i>${z === 0 ? "" : zn.z + " · "}${zn.name} <b>${inZone[z].length}</b></button>`).join("");
   document.querySelectorAll("#zonebar button").forEach((b) => b.onclick = () => { zoneFilter = zoneFilter === Number(b.dataset.z) ? null : Number(b.dataset.z); store.set("zoneFilter", zoneFilter); renderPickup(); });

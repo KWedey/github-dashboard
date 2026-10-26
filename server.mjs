@@ -166,9 +166,9 @@ function lastLive(token) {
 async function liveData(c, token) {
   const user = await c.me();
   const scope = await queueScope(c);
-  const prev = lastLive(token), stale = [];
-  const list = (key, q, fragment, slim) => orSaved(searchAll(c, q, fragment).then((nodes) => nodes.map(slim)), prev?.[key],
-    (e) => { stale.push(key); console.log(`${e.message}; showing the saved ${key} list`); });
+  const prev = lastLive(token), stale = {};
+  const list = (key, q, fragment, slim) => orSaved(searchAll(c, q, fragment).then((nodes) => nodes.map(slim)), prev, key,
+    (e, at) => { stale[key] = at; console.log(`${e.message}; showing the ${key} list saved at ${at}`); });
   const [issues, prs, reviewRequests, needsCodeReview, needsTesting] = await Promise.all([
     list("issues", `assignee:${user} is:issue is:open`, ISSUE_FRAG, slimIssue),
     list("prs", `author:${user} is:pr is:open`, PR_FRAG, slimPr),
