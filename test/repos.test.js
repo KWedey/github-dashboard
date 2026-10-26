@@ -24,6 +24,15 @@ test("finds GitHub clones, skipping listed folders, dot-folders at home and othe
   assert.equal(list[1].path, path.join(root, "github/web"));
 });
 
+test("finds clones six folders below a root and none deeper", async () => {
+  const root = home();
+  const clone = (dir, url) => { fs.mkdirSync(path.join(root, dir, ".git"), { recursive: true }); fs.writeFileSync(path.join(root, dir, ".git", "config"), `[remote "origin"]\n\turl = ${url}\n`); };
+  clone("a/b/c/d/e/Six", "https://github.com/acme/Six.git");
+  clone("a/b/c/d/e/f/seven", "https://github.com/acme/seven.git");
+  const list = await scanRepos([root], new Set(["node_modules"]), root);
+  assert.deepEqual(list.map((r) => r.repo), ["acme/app", "acme/Six", "acme/web"], "names keep their case");
+});
+
 test("regression: the default skips never open Desktop or Documents", async () => {
   // Run from launchd, opening either waits forever on a macOS privacy prompt, so the walk never finished.
   const root = home();
