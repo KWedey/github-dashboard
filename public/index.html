@@ -574,7 +574,7 @@ function renderLive() {
   renderQueue(live.needsCodeReview, "codeReview", "cr", "needs code review", "review", reviewForMe, win, winLabel);
   renderQueue(live.needsTesting, "testing", "qa", "needs testing", "test", testForMe, win, winLabel, testRank);
   const STALE_SUB = { issues: "#issueSub", prs: "#prSub", reviewRequests: "#rrSummary", needsCodeReview: "#crSub", needsTesting: "#qaSub" };
-  for (const [key, at] of Object.entries(live.stale || {})) $(STALE_SUB[key]).textContent += ` · showing the copy fetched ${ago(at)} ago: GitHub search answered wrong, trying again next refresh`;
+  for (const [key, at] of Object.entries(live.stale || {})) $(STALE_SUB[key]).textContent += ` · showing the copy fetched ${ago(at)} ago: GitHub search gave a doubtful answer, trying again next refresh`;
 }
 const hasLabel = (p, name) => (p.labels || []).some((l) => l.name.toLowerCase() === name);
 const ttApprovers = (p) => (p.reviews || []).filter((r) => r.state === "APPROVED" && live.testers.includes(r.by)).map((r) => r.by);
