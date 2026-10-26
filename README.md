@@ -10,6 +10,8 @@ Nothing personal is committed: tokens, sessions, and cached activity live in the
 
     ./start.sh            # starts the server if needed, opens http://localhost:4747
 
+Needs Node 22.12 or newer (the tests `require()` the server's ES modules). Tests: `node --test "test/*.test.js"`.
+
 You are signed in automatically on this Mac via `gh auth token`.
 
 To keep it running across reboots and crashes, run `./scripts/install-launchd.sh` once. It starts the server at login and restarts it if it exits. Logs go to `server.log`.
@@ -54,7 +56,9 @@ If the dashboard's own clone has an `upstream` remote that differs from `origin`
 - Waiting on my review: `review-requested:me is:pr is:open`.
 - Issues opened: created by me that day. Issues closed: assigned to me, closed that day.
 - PRs opened / merged: authored by me.
-- Days are local midnight to midnight (server timezone).
+- Pickup order: every open assigned issue gets a zone from its labels, then its title, then its first body line (`public/triage.js`). A high-priority label wins outright; otherwise tracking/feature framing, explicit decisions, critical, broken instruments, accessibility, cleanup, with correctness debt as the default. The list refetches every 2 minutes; **Refresh list** pulls it now. `node --test "test/*.test.js"` pins the rules.
+- **Normalize for work week**: the work week is Monday to Thursday. Per-day averages divide by work days only, and *Yesterday* means the previous work day — on a Monday that is the prior week's Thursday.
+- Days are local midnight to midnight (server timezone). The day math lives in `public/dates.js` and is pinned by `test/dates.test.js`.
 
 ## Configuration (`.env` next to `start.sh`, all optional)
 
@@ -67,7 +71,11 @@ If the dashboard's own clone has an `upstream` remote that differs from `origin`
 - `REPO_ROOTS=~,~/Studio` comma-separated folders scanned for local clones (depth 6).
 - `REPO_SKIP=Dropbox (Personal),TrainerRoad Dropbox` extra folder names to skip while scanning. `Desktop` and `Documents` are always skipped: macOS holds them behind a permission prompt the background server can never answer.
 
+## Contributions
+
+Fork it freely, but pull requests from anyone other than me are closed automatically by `.github/workflows/outside-prs.yml` — it is a personal dashboard, not a shared project. Keep your version on your fork.
+
 ## Data and settings
 
-- Past days cache per user in `cache/days-<login>.json`; today is refetched at most every 90s. A background loop keeps the last 90 days warm for every signed-in user.
+- Past days cache per user in `cache/days-<login>.json`; today is refetched at most every 90s. A past day is only reused once it was fetched *after* that day ended, so a day first cached mid-evening is refetched once and then settles. A background loop keeps the last 90 days warm for every signed-in user.
 - Repo filter, preset, custom range, and theme live in the browser's localStorage.

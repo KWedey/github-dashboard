@@ -1,7 +1,6 @@
 {
   "name": "github-dashboard",
   "private": true,
-  "type": "module",
   "scripts": {
     "start": "node server.mjs",
     "test": "node --test"

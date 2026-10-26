@@ -4,19 +4,25 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { execFile, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { createLiveSearch } from "./live-search.mjs";
 import { demoDaily, demoLive, demoQuota, demoRepos, demoUpstream } from "./demo.mjs";
+import { createGitHub } from "./github.mjs";
+import { DEFAULT_SKIP, createRepoScanner } from "./repos.mjs";
+import Dates from "./public/dates.js";
+import { createActivity, API, METRICS, daysBetween, shift, today } from "./activity.mjs";
 import { DEFAULT_FEED_URL, coalesceInvalidations, startCadenceFeed } from "./cadence-feed.mjs";
 import { latestLabelTimes } from "./label-times.mjs";
-import { DEFAULT_SKIP, scanRepos } from "./local-repos.mjs";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
+const { MAX_RANGE_DAYS } = Dates;
 const PORT = Number(process.env.PORT || 4747);
 const HOST = process.env.HOST || "127.0.0.1";
 const CLIENT_ID = process.env.GITHUB_CLIENT_ID || "";
 const CACHE_DIR = path.join(ROOT, "cache");
 const SESSIONS_FILE = path.join(CACHE_DIR, "sessions.json");
-const API = "https://api.github.com";
-const WARM_DAYS = 90;
+// Kept warm in the background, so the Custom tile's longest quick pick (Past year)
+// loads from the cache rather than hundreds of rate-limited searches.
+const WARM_DAYS = MAX_RANGE_DAYS;
 const DEMO = process.env.DEMO === "1";
 const CADENCE_FEED_KEY = process.env.CADENCE_FEED_KEY || "";
 const CADENCE_FEED_URL = process.env.CADENCE_FEED_URL || DEFAULT_FEED_URL;
@@ -26,67 +32,8 @@ fs.mkdirSync(CACHE_DIR, { recursive: true });
 let ownerToken = "";
 try { ownerToken = execFileSync("gh", ["auth", "token"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim(); } catch {}
 
-// ---------- day math (local timezone, midnight to midnight) ----------
-const pad = (n) => String(n).padStart(2, "0");
-const dayKey = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-const localDay = (iso) => dayKey(new Date(iso));
-function startOfDay(key) { const [y, m, d] = key.split("-").map(Number); return new Date(y, m - 1, d, 0, 0, 0, 0); }
-function endOfDay(key) { const [y, m, d] = key.split("-").map(Number); return new Date(y, m - 1, d, 23, 59, 59, 999); }
-function offsetIso(d) {
-  const off = -d.getTimezoneOffset(), sign = off >= 0 ? "+" : "-", a = Math.abs(off);
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}${sign}${pad(Math.floor(a / 60))}:${pad(a % 60)}`;
-}
-function daysBetween(from, to) { const out = []; for (let d = startOfDay(from); d <= startOfDay(to); d.setDate(d.getDate() + 1)) out.push(dayKey(d)); return out; }
-function shift(key, n) { const d = startOfDay(key); d.setDate(d.getDate() + n); return dayKey(d); }
-const today = () => dayKey(new Date());
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-// ---------- per-token GitHub client with rate-limit awareness ----------
-const RESERVE = 12;
-const clients = new Map();
-function client(token) {
-  if (clients.has(token)) return clients.get(token);
-  const c = {
-    headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "github-dashboard-local" },
-    search: { remaining: 30, reset: 0 },
-    userRequests: 0,
-    login: null,
-    async gh(url, init = {}, background = false) {
-      const isSearch = url.includes("/search/");
-      for (let attempt = 0; attempt < 6; attempt++) {
-        if (background && isSearch) {
-          while (c.userRequests > 0 || (c.search.remaining <= RESERVE && c.search.reset > Date.now())) await sleep(250);
-          if (c.search.remaining <= RESERVE) c.search.remaining = 30;
-        }
-        const res = await fetch(url, { ...init, headers: { ...c.headers, ...(init.headers || {}) } });
-        if (isSearch && res.headers.get("x-ratelimit-remaining") !== null) {
-          c.search = { remaining: Number(res.headers.get("x-ratelimit-remaining")), reset: Number(res.headers.get("x-ratelimit-reset")) * 1000 };
-        }
-        if (res.status === 403 || res.status === 429) {
-          const remaining = Number(res.headers.get("x-ratelimit-remaining"));
-          const reset = Number(res.headers.get("x-ratelimit-reset")) * 1000;
-          const retryAfter = Number(res.headers.get("retry-after")) * 1000;
-          const wait = retryAfter || (remaining === 0 && reset ? Math.max(reset - Date.now(), 1000) : 5000);
-          console.log(`[${c.login || "?"}] rate limited; waiting ${Math.round(wait / 1000)}s`);
-          await sleep(wait + 500);
-          continue;
-        }
-        if (res.status === 401) { const e = new Error("GitHub rejected the token"); e.code = 401; throw e; }
-        if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${await res.text()}`);
-        return res.json();
-      }
-      throw new Error(`gave up after retries: ${url}`);
-    },
-    async me() { if (!c.login) c.login = (await c.gh(`${API}/user`)).login; return c.login; },
-    async graphql(query, variables) {
-      const r = await c.gh(`${API}/graphql`, { method: "POST", body: JSON.stringify({ query, variables }) });
-      if (r.errors) throw new Error(JSON.stringify(r.errors));
-      return r.data;
-    },
-  };
-  clients.set(token, c);
-  return c;
-}
+// ---------- per-token GitHub clients (github.mjs) ----------
+const { client, laneFor } = createGitHub({ log: (m) => console.log(m) });
 
 // ---------- sessions ----------
 let sessions = {};
@@ -130,83 +77,39 @@ async function devicePoll(device_code) {
   return { status: "error", error: j.error_description || j.error };
 }
 
-// ---------- metrics ----------
-const METRICS = {
-  issuesOpened: { q: (u) => `author:${u} is:issue`, field: "created", ts: (i) => i.created_at },
-  issuesClosed: { q: (u) => `assignee:${u} is:issue`, field: "closed", ts: (i) => i.closed_at },
-  prsOpened: { q: (u) => `author:${u} is:pr`, field: "created", ts: (i) => i.created_at },
-  prsMerged: { q: (u) => `author:${u} is:pr`, field: "merged", ts: (i) => i.pull_request?.merged_at },
-};
-function slim(i) {
-  return { repo: i.repository_url.replace(`${API}/repos/`, ""), number: i.number, title: i.title, url: i.html_url, state: i.state, state_reason: i.state_reason || null, draft: i.draft || false, created_at: i.created_at, closed_at: i.closed_at, merged_at: i.pull_request?.merged_at || null, is_pr: Boolean(i.pull_request) };
-}
-async function searchRange(c, metric, fromKey, toKey, user, background) {
-  const m = METRICS[metric];
-  const q = `${m.q(user)} ${m.field}:${offsetIso(startOfDay(fromKey))}..${offsetIso(endOfDay(toKey))}`;
-  const first = await c.gh(`${API}/search/issues?q=${encodeURIComponent(q)}&per_page=100&page=1`, {}, background);
-  if (first.total_count > 1000 && fromKey !== toKey) {
-    const days = daysBetween(fromKey, toKey), mid = days[Math.floor(days.length / 2) - 1], next = days[Math.floor(days.length / 2)];
-    const [a, b] = await Promise.all([searchRange(c, metric, fromKey, mid, user, background), searchRange(c, metric, next, toKey, user, background)]);
-    return a.concat(b);
-  }
-  let items = first.items;
-  const pages = Math.min(10, Math.ceil(first.total_count / 100));
-  for (let p = 2; p <= pages; p++) items = items.concat((await c.gh(`${API}/search/issues?q=${encodeURIComponent(q)}&per_page=100&page=${p}`, {}, background)).items);
-  const buckets = {};
-  for (const k of daysBetween(fromKey, toKey)) buckets[k] = [];
-  for (const it of items) { const ts = m.ts(it); if (!ts) continue; const k = localDay(ts); if (buckets[k]) buckets[k].push(slim(it)); }
-  return Object.entries(buckets).map(([day, list]) => ({ day, items: list }));
-}
-
 // ---------- per-user day cache ----------
 const caches = new Map();
 function cacheFor(login) {
   if (caches.has(login)) return caches.get(login);
   const file = path.join(CACHE_DIR, `days-${login}.json`);
-  let data = {};
-  try { data = JSON.parse(fs.readFileSync(file, "utf8")); } catch {}
+  let raw = {};
+  try { raw = JSON.parse(fs.readFileSync(file, "utf8")); } catch {}
+  // Legacy files were a bare { "metric:day": items } map with no fetch times; a day
+  // from one of those refetches once and is then settled like any other.
+  const stored = raw.days && raw.fetchedAt ? raw : { days: raw, fetchedAt: {} };
+  stored.emptyAt ||= {};
   let timer = null;
-  const entry = { data, save() { clearTimeout(timer); timer = setTimeout(() => fs.writeFileSync(file, JSON.stringify(data)), 250); } };
+  const entry = { data: stored.days, fetchedAt: stored.fetchedAt, emptyAt: stored.emptyAt, save() { clearTimeout(timer); timer = setTimeout(() => fs.writeFileSync(file, JSON.stringify(stored)), 250); } };
   caches.set(login, entry);
   return entry;
 }
-const inflight = new Map();
-const FRESH_MS = 90 * 1000;
-const freshness = new Map();
-async function dailyData(c, fromKey, toKey, force, background = false) {
-  const user = await c.me();
-  const cache = cacheFor(user);
-  const tKey = today(), days = daysBetween(fromKey, toKey), out = {};
-  for (const metric of Object.keys(METRICS)) {
-    out[metric] = {};
-    const fresh = (d) => d < tKey || (Date.now() - (freshness.get(`${user}:${metric}:${d}`) || 0) < FRESH_MS);
-    const missing = days.filter((d) => force || !(fresh(d) && cache.data[`${metric}:${d}`]));
-    const spans = [];
-    for (const d of missing) { const last = spans[spans.length - 1]; if (last && daysBetween(last[1], d).length === 2) last[1] = d; else spans.push([d, d]); }
-    await Promise.all(spans.map(async ([a, b]) => {
-      const key = `${user}:${metric}:${a}:${b}`;
-      if (!inflight.has(key)) inflight.set(key, searchRange(c, metric, a, b, user, background).finally(() => inflight.delete(key)));
-      for (const { day, items } of await inflight.get(key)) { cache.data[`${metric}:${day}`] = items; if (day >= tKey) freshness.set(`${user}:${metric}:${day}`, Date.now()); out[metric][day] = items; }
-    }));
-    for (const d of days) if (!out[metric][d]) out[metric][d] = cache.data[`${metric}:${d}`] || [];
-  }
-  cache.save();
-  return { user, from: fromKey, to: toKey, today: tKey, days, metrics: out };
-}
+const { dailyData } = createActivity({ cacheFor, laneFor, log: (m) => console.log(m) });
 
 // ---------- live (GraphQL) ----------
+// Page size, retries and completeness checks live in live-search.mjs. The explicit sort
+// gives every page the same order, so the offset cursors cannot skip or repeat a result.
+// One per client, i.e. per token: two tokens for the same login can see different repos,
+// so neither a shared in-flight fetch nor the remembered counts may cross between them.
+const liveSearches = new WeakMap();
 async function searchAll(c, q, fragment) {
-  const nodes = []; let after = null;
-  for (let i = 0; i < 10; i++) {
-    const data = await c.graphql(`query($q:String!,$after:String){ search(query:$q,type:ISSUE,first:100,after:$after){ issueCount pageInfo{hasNextPage endCursor} nodes{ ${fragment} } } }`, { q, after });
-    nodes.push(...data.search.nodes.filter((n) => n && n.number));
-    if (!data.search.pageInfo.hasNextPage) break;
-    after = data.search.pageInfo.endCursor;
-  }
-  return nodes;
+  const query = `query($q:String!,$first:Int!,$after:String){ search(query:$q,type:ISSUE,first:$first,after:$after){ issueCount pageInfo{hasNextPage endCursor} nodes{ ${fragment} } } }`;
+  const sorted = `${q} sort:created-desc`;
+  if (!liveSearches.has(c)) liveSearches.set(c, createLiveSearch());
+  return liveSearches.get(c)(sorted, async (after, first) => (await c.graphql(query, { q: sorted, first, after })).search,
+    { q: sorted, log: (msg) => console.log(`[${c.login || "?"}] live search "${sorted}": ${msg}`) });
 }
 const ISSUE_FRAG = `... on Issue { number title url createdAt updatedAt bodyText comments{ totalCount } repository{ nameWithOwner } labels(first:10){ nodes{ name color } } milestone{ title }
-  linkedPrs: closedByPullRequestsReferences(first:10, includeClosedPrs:false){ nodes{ number url isDraft state repository{ nameWithOwner } } } }`;
+  linkedPrs: closedByPullRequestsReferences(first:10, includeClosedPrs:false){ nodes{ number title url isDraft state repository{ nameWithOwner } } } }`;
 const PR_FRAG = `... on PullRequest { number title url createdAt updatedAt isDraft reviewDecision mergeable headRefName baseRefName additions deletions author{ login } repository{ nameWithOwner }
   labels(first:30){ nodes{ name color } } assignees(first:10){ nodes{ login } } statusCheckRollup{ state }
   latestReviews(first:20){ nodes{ author{ login } state submittedAt } } commits(last:1){ nodes{ commit{ committedDate } } } closingIssuesReferences(first:5){ nodes{ number title url } }
@@ -220,7 +123,7 @@ function slimPr(n) {
   return { repo: n.repository.nameWithOwner, number: n.number, title: n.title, url: n.url, author: n.author?.login || null, created_at: n.createdAt, updated_at: n.updatedAt, draft: n.isDraft, reviewDecision: n.reviewDecision, mergeable: n.mergeable, checks: n.statusCheckRollup?.state || null, head: n.headRefName, base: n.baseRefName, additions: n.additions, deletions: n.deletions, labels: n.labels.nodes, labeledAt: latestLabelTimes(n.timelineItems?.nodes), assignees: n.assignees.nodes.map((a) => a.login), reviews: (n.latestReviews?.nodes || []).map((r) => ({ by: r.author?.login || null, state: r.state, at: r.submittedAt })), pushed_at: n.commits?.nodes[0]?.commit.committedDate || null, closes: n.closingIssuesReferences.nodes, reviewers: n.reviewRequests.nodes.map((r) => r.requestedReviewer?.login || r.requestedReviewer?.name).filter(Boolean) };
 }
 function slimIssue(n) {
-  return { repo: n.repository.nameWithOwner, number: n.number, title: n.title, url: n.url, created_at: n.createdAt, updated_at: n.updatedAt, labels: n.labels.nodes, comments: n.comments.totalCount, why: firstLine(n.bodyText), milestone: n.milestone?.title || null, linkedPrs: n.linkedPrs.nodes.map((p) => ({ repo: p.repository.nameWithOwner, number: p.number, url: p.url, draft: p.isDraft, state: p.state })) };
+  return { repo: n.repository.nameWithOwner, number: n.number, title: n.title, url: n.url, created_at: n.createdAt, updated_at: n.updatedAt, labels: n.labels.nodes, comments: n.comments.totalCount, why: firstLine(n.bodyText), milestone: n.milestone?.title || null, linkedPrs: n.linkedPrs.nodes.map((p) => ({ repo: p.repository.nameWithOwner, number: p.number, title: p.title, url: p.url, draft: p.isDraft, state: p.state })) };
 }
 const QUEUES = { needsCodeReview: "Needs Code Review", needsTesting: "Needs Testing" };
 const REVIEW_AUTHORS = (process.env.REVIEW_AUTHORS || "RileyPascal,justib99,PaulDeister,reynaldotr").split(",").map((x) => x.trim()).filter(Boolean);
@@ -243,7 +146,17 @@ async function queueScope(c) {
   if (!c.orgs) c.orgs = (await c.gh(`${API}/user/orgs?per_page=100`)).map((o) => o.login);
   return [`user:${user}`, ...c.orgs.map((o) => `org:${o}`)].join(" ");
 }
-async function liveData(c) {
+// The last lists each token fetched, kept on disk so a page load (even after a restart)
+// shows them at once while fresh ones load. Files are named by a hash of the token, so
+// no token is written out.
+const savedLive = new Map();
+const liveFile = (token) => path.join(CACHE_DIR, `live-${crypto.createHash("sha256").update(token).digest("hex").slice(0, 16)}.json`);
+function lastLive(token) {
+  if (!savedLive.has(token)) { let v = null; try { v = JSON.parse(fs.readFileSync(liveFile(token), "utf8")); } catch {} savedLive.set(token, v); }
+  return savedLive.get(token);
+}
+
+async function liveData(c, token) {
   const user = await c.me();
   const scope = await queueScope(c);
   const [issues, prs, reviewRequests, needsCodeReview, needsTesting] = await Promise.all([
@@ -253,7 +166,10 @@ async function liveData(c) {
     searchAll(c, `${scope} is:pr is:open label:"${QUEUES.needsCodeReview}"`, PR_FRAG),
     searchAll(c, `${scope} is:pr is:open label:"${QUEUES.needsTesting}"`, PR_FRAG),
   ]);
-  return { user, fetchedAt: new Date().toISOString(), reviewAuthors: REVIEW_AUTHORS, testers: await testers(c), issues: issues.map(slimIssue), prs: prs.map(slimPr), reviewRequests: reviewRequests.map(slimPr), needsCodeReview: needsCodeReview.map(slimPr), needsTesting: needsTesting.map(slimPr) };
+  const data = { user, fetchedAt: new Date().toISOString(), reviewAuthors: REVIEW_AUTHORS, testers: await testers(c), issues: issues.map(slimIssue), prs: prs.map(slimPr), reviewRequests: reviewRequests.map(slimPr), needsCodeReview: needsCodeReview.map(slimPr), needsTesting: needsTesting.map(slimPr) };
+  savedLive.set(token, data);
+  fs.promises.writeFile(liveFile(token), JSON.stringify(data), { mode: 0o600 }).catch((e) => console.log(`could not save live lists: ${e.message}`));
+  return data;
 }
 
 // ---------- Claude quotas from cpa-route (owner only) ----------
@@ -349,19 +265,14 @@ async function upstreamDrift(c) {
   return drift.data;
 }
 
-// ---------- local repos (owner only) ----------
-const SCAN_ROOTS = (process.env.REPO_ROOTS || "~,~/Studio").split(",").map((r) => r.trim().replace(/^~/, process.env.HOME)).filter(Boolean);
-const SKIP = [...DEFAULT_SKIP, ...(process.env.REPO_SKIP || "Dropbox (Personal),TrainerRoad Dropbox").split(",").map((x) => x.trim()).filter(Boolean)];
-let localRepoCache = { at: 0, list: [] }, repoScan = null;
-function localRepos() {
-  if (!repoScan && Date.now() - localRepoCache.at >= 10 * 60 * 1000) {
-    repoScan = scanRepos(SCAN_ROOTS, { home: process.env.HOME, skip: SKIP })
-      .then((list) => { localRepoCache = { at: Date.now(), list }; })
-      .catch((e) => console.error("repo scan failed:", e.message))
-      .finally(() => { repoScan = null; });
-  }
-  return repoScan && !localRepoCache.at ? repoScan.then(() => localRepoCache.list) : localRepoCache.list;
-}
+// ---------- local repos (owner only, repos.mjs) ----------
+const localRepos = createRepoScanner({
+  roots: (process.env.REPO_ROOTS || "~,~/Studio").split(",").map((r) => r.trim().replace(/^~/, process.env.HOME)).filter(Boolean),
+  skip: new Set([...DEFAULT_SKIP, ...(process.env.REPO_SKIP || "Dropbox (Personal),TrainerRoad Dropbox").split(",").map((x) => x.trim()).filter(Boolean)]),
+  file: path.join(CACHE_DIR, "local-repos.json"),
+  log: (m) => console.log(m),
+});
+if (ownerToken && !DEMO) localRepos.list().catch((e) => console.log(`local repo scan failed: ${e.message}`)); // ready before the first page asks
 
 // ---------- browser event stream + Cadence webhook feed ----------
 const browserStreams = new Set();
@@ -380,9 +291,9 @@ function openBrowserStream(req, res, login) {
 }
 function invalidate(logins, reason) {
   const t = today(), y = shift(t, -1);
-  for (const c of clients.values()) {
-    if (!c.login || (logins && !logins.has(c.login.toLowerCase()))) continue;
-    for (const metric of Object.keys(METRICS)) for (const d of [t, y]) freshness.delete(`${c.login}:${metric}:${d}`);
+  for (const [login, cache] of caches) {
+    if (logins && !logins.has(login.toLowerCase())) continue;
+    for (const metric of Object.keys(METRICS)) for (const d of [t, y]) delete cache.fetchedAt[`${metric}:${d}`];
   }
   broadcast("refresh", { reason, at: new Date().toISOString() }, logins);
 }
@@ -395,8 +306,14 @@ async function warm() {
   const tokens = new Set([ownerToken, ...Object.values(sessions).map((s) => s.token)].filter(Boolean));
   for (const token of tokens) {
     const c = client(token);
-    try { const t = today(); await dailyData(c, shift(t, -1), t, true, true); await dailyData(c, shift(t, -(WARM_DAYS - 1)), t, false, true); }
-    catch (e) { console.error(`warm failed for ${c.login || "?"}:`, e.message); }
+    // The two passes fail independently, so a refused yesterday..today refresh still lets
+    // the warm pass fill in whatever is missing. Filling a year from empty takes several
+    // passes; each saves what it got.
+    const t = today();
+    for (const [from, force, what] of [[shift(t, -1), true, "refresh"], [shift(t, -(WARM_DAYS - 1)), false, `${WARM_DAYS}-day warm`]]) {
+      try { await dailyData(c, from, t, force, true); }
+      catch (e) { console.error(`${what} failed for ${c.login || "?"}:`, e.message); }
+    }
   }
   warming = false;
 }
@@ -404,7 +321,7 @@ if (!DEMO) { setTimeout(warm, 500); setInterval(warm, 5 * 60 * 1000); }
 
 // ---------- http ----------
 const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".json": "application/json" };
-function send(res, code, body, type = "application/json") { res.writeHead(code, { "Content-Type": type, "Cache-Control": "no-store" }); res.end(type.startsWith("application/json") ? JSON.stringify(body) : body); }
+function send(res, code, body, type = "application/json", headers = {}) { res.writeHead(code, { "Content-Type": type, "Cache-Control": "no-store", ...headers }); res.end(type.startsWith("application/json") ? JSON.stringify(body) : body); }
 function readBody(req) { return new Promise((r) => { let s = ""; req.on("data", (d) => (s += d)).on("end", () => r(s)); }); }
 
 const server = http.createServer(async (req, res) => {
@@ -436,7 +353,13 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/api/auth/device/poll" && req.method === "POST") {
       const { device_code } = JSON.parse(await readBody(req) || "{}");
       const r = await devicePoll(device_code);
-      if (r.status === "ok") { const login = await client(r.token).me(); newSession(res, r.token, login); setTimeout(warm, 100); return send(res, 200, { status: "ok", login }); }
+      if (r.status === "ok") {
+        // GitHub has already handed over the token and forgotten the device code, so a rate
+        // limit on reading the login must not lose it; the login is read again on next use.
+        let login = null;
+        try { login = await client(r.token).me(); } catch (e) { if (e.code !== 429) throw e; console.log(`device sign-in: ${e.message}; saving the session without a login`); }
+        newSession(res, r.token, login); setTimeout(warm, 100); return send(res, 200, { status: "ok", login });
+      }
       return send(res, 200, r);
     }
     if (url.pathname === "/api/auth/token" && req.method === "POST") {
@@ -454,18 +377,18 @@ const server = http.createServer(async (req, res) => {
       const s = sessionFor(req);
       if (!s) return send(res, 401, { error: "Sign in with GitHub first" });
       const c = client(s.token);
-      if (url.pathname === "/api/live") return send(res, 200, await liveData(c));
+      if (url.pathname === "/api/live" && url.searchParams.get("saved") === "1") return send(res, 200, lastLive(s.token) || { none: true });
+      if (url.pathname === "/api/live") return send(res, 200, await liveData(c, s.token));
       if (url.pathname === "/api/events") return openBrowserStream(req, res, await c.me());
       if (url.pathname === "/api/me") return send(res, 200, { login: await c.me(), owner: Boolean(s.owner) });
-      if (url.pathname === "/api/repos") return send(res, 200, { repos: s.owner ? await localRepos() : [] });
+      if (url.pathname === "/api/repos") return send(res, 200, { repos: s.owner ? await localRepos.list() : [] });
       if (url.pathname === "/api/quota") return send(res, 200, s.owner ? await quotaData(url.searchParams.get("force") === "1") : { available: false });
       if (url.pathname === "/api/upstream") return send(res, 200, s.owner ? await upstreamDrift(c) : { available: false });
       if (url.pathname === "/api/daily") {
         const to = url.searchParams.get("to") || today(), from = url.searchParams.get("from") || to;
         if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) return send(res, 400, { error: "bad range" });
-        if (daysBetween(from, to).length > 366) return send(res, 400, { error: "range over 366 days" });
-        c.userRequests++;
-        try { return send(res, 200, await dailyData(c, from, to, url.searchParams.get("force") === "1")); } finally { c.userRequests--; }
+        if (daysBetween(from, to).length > MAX_RANGE_DAYS) return send(res, 400, { error: `range over ${MAX_RANGE_DAYS} days` });
+        return send(res, 200, await laneFor(await c.me()).whileUser(() => dailyData(c, from, to, url.searchParams.get("force") === "1")));
       }
       return send(res, 404, { error: "not found" });
     }
@@ -475,6 +398,10 @@ const server = http.createServer(async (req, res) => {
     if (!file.startsWith(path.join(ROOT, "public")) || !fs.existsSync(file)) return send(res, 404, "not found", "text/plain");
     return send(res, 200, fs.readFileSync(file), MIME[path.extname(file)] || "application/octet-stream");
   } catch (e) {
+    if (e.code === 429) {
+      console.log(`${url.pathname}: ${e.message}`);
+      return send(res, 429, { error: e.message, until: e.until }, "application/json", { "Retry-After": String(Math.max(Math.ceil((e.until - Date.now()) / 1000), 1)) });
+    }
     console.error(e);
     if (e.code === 401) return send(res, 401, { error: "Sign in with GitHub first" });
     return send(res, 500, { error: String(e.message || e) });
