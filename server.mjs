@@ -9,7 +9,7 @@ import { demoDaily, demoLive, demoQuota, demoRepos, demoUpstream } from "./demo.
 import { createGitHub } from "./github.mjs";
 import { DEFAULT_SKIP, createRepoScanner } from "./repos.mjs";
 import Dates from "./public/dates.js";
-import { createActivity, API, METRICS, daysBetween, shift, today } from "./activity.mjs";
+import { createActivity, invalidateDays, API, daysBetween, shift, today } from "./activity.mjs";
 import { DEFAULT_FEED_URL, coalesceInvalidations, startCadenceFeed } from "./cadence-feed.mjs";
 import { latestLabelTimes } from "./label-times.mjs";
 import { compareFork, githubSlug } from "./upstream-drift.mjs";
@@ -287,7 +287,7 @@ function invalidate(logins, reason) {
   const t = today(), y = shift(t, -1);
   for (const [login, cache] of caches) {
     if (logins && !logins.has(login.toLowerCase())) continue;
-    for (const metric of Object.keys(METRICS)) for (const d of [t, y]) delete cache.fetchedAt[`${metric}:${d}`];
+    invalidateDays(cache, [t, y]);
   }
   broadcast("refresh", { reason, at: new Date().toISOString() }, logins);
 }

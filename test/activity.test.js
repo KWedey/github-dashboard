@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { createActivity, belongsIn, localDay, shift, today, startOfDay, CONFIRM_MS, CHECK_ITEMS } = require("../activity.mjs");
+const { createActivity, invalidateDays, belongsIn, localDay, shift, today, startOfDay, METRICS, CONFIRM_MS, CHECK_ITEMS } = require("../activity.mjs");
 const { searchLane } = require("../ratelimit.mjs");
 
 // Issues API shapes as GitHub returned them on 2026-10-22, with the repo renamed.
@@ -125,6 +125,24 @@ test("a day already settled empty counts as the earlier answer, so Refresh doesn
   await d.dailyData(d.c, day, day, true, true);
   assert.ok(d.cache.fetchedAt[k] > settledAt);
   assert.equal(d.cache.emptyAt[k], undefined);
+});
+
+test("regression: a webhook invalidation asks search again without unsettling a day settled empty", async (t) => {
+  // server.mjs invalidated by deleting fetchedAt, which also threw away the settled empty
+  // the next unverifiable empty needs, so every webhook kept yesterday re-searched for CONFIRM_MS.
+  t.mock.timers.enable({ apis: ["Date"], now: new Date(2026, 9, 21, 12).getTime() });
+  const y = shift(today(), -1), settledAt = Date.now() - 2 * CONFIRM_MS, keys = Object.keys(METRICS).map((m) => `${m}:${y}`);
+  const d = dashboard(() => EMPTY);
+  for (const k of keys) { d.cache.data[k] = []; d.cache.fetchedAt[k] = settledAt; }
+  await d.dailyData(d.c, y, y, false, true);
+  assert.equal(d.asked.length, 0, "settled after the day ended, so fresh");
+  invalidateDays(d.cache, [today(), y]);
+  await d.dailyData(d.c, y, y, false, true);
+  assert.ok(d.asked.some((p) => p.startsWith("/search/")), "the invalidated day was asked again");
+  for (const k of keys) {
+    assert.ok(d.cache.fetchedAt[k] > settledAt, `${k} settled again on that answer`);
+    assert.equal(d.cache.emptyAt[k], undefined, `${k} is not left awaiting confirmation`);
+  }
 });
 
 test("regression: a settled day whose forced refresh fails is asked again on the next normal load", async () => {

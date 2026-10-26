@@ -39,6 +39,17 @@ export const FRESH_MS = 90 * 1000; // how long today's counts are reused
 export const CONFIRM_MS = 10 * 60 * 1000; // how far apart two unverifiable empty answers must be to settle a day
 export const CHECK_ITEMS = 5; // cached items read directly to test an empty answer
 
+// Days a webhook says may have changed: the next load asks search again. A day settled
+// empty keeps that answer as the earlier one, as a Refresh does, so the next empty answer
+// settles it instead of restarting the CONFIRM_MS wait.
+export function invalidateDays(cache, days) {
+  for (const metric of Object.keys(METRICS)) for (const d of days) {
+    const k = `${metric}:${d}`;
+    if (cache.fetchedAt[k] && cache.data[k]?.length === 0) cache.emptyAt[k] ??= cache.fetchedAt[k];
+    delete cache.fetchedAt[k];
+  }
+}
+
 export function createActivity({ cacheFor, laneFor, log = () => {} }) {
   // Whether items we already had still belong in the range, read from the issues
   // themselves rather than through search: true if one does, false only when every known

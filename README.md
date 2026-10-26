@@ -34,7 +34,7 @@ Cadence streams every GitHub webhook the org receives at `https://cadence.traine
 1. Sign in to Cadence and mint a key at **Settings → Feed Keys** (`/settings/feed-keys`). Give this dashboard its own key; a key shared with another tool gets its stream displaced.
 2. Put `CADENCE_FEED_KEY=cdnf.<id>.<secret>` in `.env` next to `start.sh` and restart the server.
 
-The feed is an invalidation signal, never the source of truth: a delivery naming your login clears today's cache for you and tells the open pages to refetch. Every reconnect refetches once too, because the feed has no replay. Revoking the key on Cadence turns the badge to **Feed down** within five minutes and the dashboard falls back to polling. `CADENCE_FEED_URL` overrides the endpoint for a staging Cadence.
+The feed is an invalidation signal, never the source of truth: a delivery naming your login marks today and yesterday for refetch and tells the open pages to refetch. Every reconnect refetches once too, because the feed has no replay. Revoking the key on Cadence turns the badge to **Feed down** within five minutes and the dashboard falls back to polling. `CADENCE_FEED_URL` overrides the endpoint for a staging Cadence.
 
 ## AI quotas (optional, owner only)
 
