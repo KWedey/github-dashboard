@@ -6,13 +6,13 @@ import path from "node:path";
 import { QUOTA_STALE_MS, createClaudeQuota } from "../quota.mjs";
 
 const NOW = Date.parse("2026-10-28T12:00:00Z");
-const LIVE = "claude-2032ba4e-kyle.wederquist@trainerroad.com.json", RETIRED = "claude-4a75b0e3-kyle.wederquist@trainerroad.com.json";
+const LIVE = "claude-1a2b3c4d-octocat@acme.com.json", RETIRED = "claude-5e6f7a8b-octocat@acme.com.json";
 const entry = (minutesOld) => ({ fetched_at: new Date(NOW - minutesOld * 60e3).toISOString(), usage: { five_hour: { utilization: 12, resets_at: null }, seven_day: { utilization: 30, resets_at: null } } });
 
 function setup(cache, credentials = Object.keys(cache), { run } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "quota-test-")), authDir = path.join(dir, "auth"), usageCache = path.join(dir, "usage-cache.json"), cpaRoute = path.join(dir, "cpa-route");
   fs.mkdirSync(authDir);
-  for (const file of credentials) fs.writeFileSync(path.join(authDir, file), JSON.stringify({ email: "kyle.wederquist@trainerroad.com" }));
+  for (const file of credentials) fs.writeFileSync(path.join(authDir, file), JSON.stringify({ email: "octocat@acme.com" }));
   fs.writeFileSync(usageCache, JSON.stringify(cache));
   fs.writeFileSync(cpaRoute, "");
   const runs = [], clock = { now: NOW };
@@ -31,10 +31,10 @@ test("a cache entry for a credential no longer on disk is neither shown nor coun
 });
 
 test("a disabled or reserved seat is shown but not counted as stale, since cpa-route ranking skips it", () => {
-  const DISABLED = "claude-5b0e3a75-kw@trainerroad.com.json", RESERVED = "claude-6c1f4b86-kjw@trainerroad.com.json";
+  const DISABLED = "claude-9c0d1e2f-hubot@acme.com.json", RESERVED = "claude-3a4b5c6d-monalisa@acme.com.json";
   const { quota, runs, authDir } = setup({ [LIVE]: entry(5), [DISABLED]: entry(36 * 60), [RESERVED]: entry(36 * 60) });
-  fs.writeFileSync(path.join(authDir, DISABLED), JSON.stringify({ email: "kw@trainerroad.com", disabled: true }));
-  fs.writeFileSync(path.join(authDir, RESERVED), JSON.stringify({ email: "kjw@trainerroad.com", reserved: true }));
+  fs.writeFileSync(path.join(authDir, DISABLED), JSON.stringify({ email: "hubot@acme.com", disabled: true }));
+  fs.writeFileSync(path.join(authDir, RESERVED), JSON.stringify({ email: "monalisa@acme.com", reserved: true }));
   const read = quota.read(false);
   assert.deepEqual(read.accounts.map((a) => a.file).sort(), [LIVE, DISABLED, RESERVED].sort());
   assert.equal(read.fetched_at, entry(5).fetched_at);
@@ -43,7 +43,7 @@ test("a disabled or reserved seat is shown but not counted as stale, since cpa-r
 
 test("a seat whose auth file says reserved: false is ranked, so its stale entry starts a refresh", () => {
   const { quota, runs, authDir } = setup({ [LIVE]: entry(20) });
-  fs.writeFileSync(path.join(authDir, LIVE), JSON.stringify({ email: "kyle.wederquist@trainerroad.com", reserved: false }));
+  fs.writeFileSync(path.join(authDir, LIVE), JSON.stringify({ email: "octocat@acme.com", reserved: false }));
   assert.equal(quota.read(false).fetched_at, entry(20).fetched_at);
   assert.equal(runs.length, 1);
 });
