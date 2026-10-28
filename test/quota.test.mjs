@@ -21,7 +21,6 @@ function setup(cache, credentials = Object.keys(cache), { run, stuckFile, real =
   const onRefreshed = () => { refreshed++; for (const wake of waiters.splice(0)) wake(); };
   const make = (file = stuckFile) => createClaudeQuota({ usageCache, authDir, cpaRoute, stuckFile: file, now: () => clock.now, run: real ? undefined : run || ((bin, done) => runs.push(done)), onRefreshed });
   const nextRefresh = () => new Promise((wake) => waiters.push(wake));
-  // What a ranking run (or cpa-route's hourly apply) writes for a seat it refetched.
   const fetched = (file, minutesOld = 0) => {
     const c = JSON.parse(fs.readFileSync(usageCache, "utf8"));
     c[file] = { ...c[file], fetched_at: new Date(clock.now - minutesOld * 60e3).toISOString() };
@@ -31,8 +30,7 @@ function setup(cache, credentials = Object.keys(cache), { run, stuckFile, real =
   return { quota: make(), make, runs, clock, dir, authDir, usageCache, cpaRoute, fetched, nextRefresh, refreshes: () => refreshed };
 }
 const minutes = (n) => n * 60e3;
-// Reads across two hours, finishing every run without touching the seat: cpa-route never refreshes it.
-function readsOverTwoHours({ quota, runs, clock }) {
+function readsOverTwoHoursNeverRefetching({ quota, runs, clock }) {
   for (let i = 0; i < 9; i++) {
     quota.read(false);
     while (runs.length && runs.at(-1).pending !== false) { const done = runs.at(-1); done.pending = false; done(); }
@@ -51,14 +49,14 @@ test("a cache entry for a credential no longer on disk is neither shown nor coun
 
 test("an orphan seat starts no ranking run, however long it sits", () => {
   const t = setup({ [RETIRED]: entry(36 * 60) }, []);
-  assert.deepEqual(readsOverTwoHours(t).accounts, []);
+  assert.deepEqual(readsOverTwoHoursNeverRefetching(t).accounts, []);
   assert.equal(t.runs.length, 1, "only the empty-cache fill");
 });
 
 test("a disabled seat starts one ranking run, then shows as stale and starts no more", () => {
   const t = setup({ [DISABLED]: entry(36 * 60) });
   fs.writeFileSync(path.join(t.authDir, DISABLED), JSON.stringify({ email: "hubot@acme.com", disabled: true }));
-  const read = readsOverTwoHours(t);
+  const read = readsOverTwoHoursNeverRefetching(t);
   assert.equal(t.runs.length, 1);
   assert.equal(read.accounts[0].stale, true);
   assert.equal(read.fetched_at, entry(36 * 60).fetched_at, "the header keeps its age");
@@ -66,7 +64,7 @@ test("a disabled seat starts one ranking run, then shows as stale and starts no 
 
 test("a seat reserved through cpa-route's pinning pool, invisible in its auth file, starts one run and no more", () => {
   const t = setup({ [RESERVED]: entry(36 * 60) });
-  assert.equal(readsOverTwoHours(t).accounts[0].stale, true);
+  assert.equal(readsOverTwoHoursNeverRefetching(t).accounts[0].stale, true);
   assert.equal(t.runs.length, 1);
 });
 

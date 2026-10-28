@@ -1,6 +1,5 @@
 export const sseFrame = (event, data) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 
-// Open browser event streams; each remembers who it belongs to, so an event can go to some pages only.
 export function createStreams({ first = () => "", pingMs = 25 * 1000 } = {}) {
   const streams = new Set();
   return {
