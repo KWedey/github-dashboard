@@ -1,5 +1,6 @@
 import http from "node:http";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 import { execFile, execFileSync } from "node:child_process";
@@ -17,7 +18,7 @@ import { createClaudeQuota, listAuthDir, quotaWindow, readQuota } from "./quota.
 import { createStreams, sseFrame } from "./events.mjs";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
-const untilde = (p) => p.replace(/^~(?=\/|$)/, () => process.env.HOME);
+const untilde = (p) => p.replace(/^~(?=\/|$)/, () => os.homedir());
 const { MAX_RANGE_DAYS } = Dates;
 const PORT = Number(process.env.PORT || 4747);
 const HOST = process.env.HOST || "127.0.0.1";
