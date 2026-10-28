@@ -30,10 +30,12 @@ function setup(cache, credentials = Object.keys(cache), { run, stuckFile, real =
   return { quota: make(), make, runs, clock, dir, authDir, usageCache, cpaRoute, fetched, nextRefresh, refreshes: () => refreshed };
 }
 const minutes = (n) => n * 60e3;
-function readsOverTwoHoursNeverRefetching({ quota, runs, clock }) {
+// What execFile hands back for a non-zero exit.
+const exit = (code) => Object.assign(new Error(`Command failed: cpa-route ranking`), { code });
+function readsOverTwoHoursNeverRefetching({ quota, runs, clock }, err) {
   for (let i = 0; i < 9; i++) {
     quota.read(false);
-    while (runs.length && runs.at(-1).pending !== false) { const done = runs.at(-1); done.pending = false; done(); }
+    while (runs.length && runs.at(-1).pending !== false) { const done = runs.at(-1); done.pending = false; done(err); }
     clock.now += minutes(16);
   }
   return quota.read(false);
@@ -62,7 +64,7 @@ test("an auth folder holding only Codex credentials starts no ranking run, howev
 test("a disabled seat starts one ranking run, then shows as stale and starts no more", () => {
   const t = setup({ [DISABLED]: entry(36 * 60) });
   fs.writeFileSync(path.join(t.authDir, DISABLED), JSON.stringify({ email: "hubot@acme.com", disabled: true }));
-  const read = readsOverTwoHoursNeverRefetching(t);
+  const read = readsOverTwoHoursNeverRefetching(t, exit(3));
   assert.equal(t.runs.length, 1);
   assert.equal(read.accounts[0].stale, true);
   assert.equal(read.fetched_at, entry(36 * 60).fetched_at, "the header keeps its age");
@@ -70,7 +72,7 @@ test("a disabled seat starts one ranking run, then shows as stale and starts no 
 
 test("a seat reserved through cpa-route's pinning pool, invisible in its auth file, starts one run and no more", () => {
   const t = setup({ [RESERVED]: entry(36 * 60) });
-  assert.equal(readsOverTwoHoursNeverRefetching(t).accounts[0].stale, true);
+  assert.equal(readsOverTwoHoursNeverRefetching(t, exit(3)).accounts[0].stale, true);
   assert.equal(t.runs.length, 1);
 });
 
@@ -213,6 +215,16 @@ test("a ranking run cpa-route refuses with a non-zero exit marks no seat stuck, 
   s.clock.now += 1;
   assert.equal(s.quota.read(false).refreshing, true, "then the seat starts the next run");
   await s.nextRefresh();
+});
+
+test("a ranking run that exits 3, nothing to rank, marks the seats it left unchanged", async (t) => {
+  t.mock.method(console, "error", () => {});
+  const s = setup({ [RESERVED]: entry(20) }, undefined, { real: true, script: "#!/bin/sh\nexit 3\n" });
+  s.quota.read(false);
+  await s.nextRefresh();
+  assert.equal(s.quota.read(false).accounts[0].stale, true);
+  s.clock.now += QUOTA_STALE_MS + 1;
+  assert.equal(s.quota.read(false).refreshing, false, "no run once the floor passes");
 });
 
 test("cpa-route ranks with the dashboard's 15-minute freshness window, whatever the environment says", async (t) => {

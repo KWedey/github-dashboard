@@ -9,6 +9,8 @@ const noWindow = (name) => ({ name, pct: null, resets_at: null });
 
 // A seat cpa-route still calls fresh would look stuck, so its freshness window is pinned to ours.
 const rankingEnv = () => ({ ...process.env, CPA_CACHE_TTL: String(QUOTA_STALE_MS / 1000) });
+// cpa-route's exit when every credential is reserved or disabled, or none exists.
+export const EXIT_NOTHING_TO_RANK = 3;
 const runRanking = (bin, done) => execFile(bin, ["ranking"], { timeout: 120 * 1000, env: rankingEnv() }, (err) => { if (err) console.error("cpa-route ranking:", err.message); done(err); });
 
 const isObject = (x) => Boolean(x) && typeof x === "object" && !Array.isArray(x);
@@ -46,8 +48,8 @@ export function createClaudeQuota({ usageCache, authDir, cpaRoute, stuckFile = n
     refreshing = true; lastStart = now();
     const owed = new Map(seats.filter((a) => isStale(a.fetched_at, lastStart)).map((a) => [a.file, a.fetched_at]));
     const finish = (ran) => { refreshing = false; if (ran) settle(owed); onRefreshed(); };
-    // Only a clean exit says cpa-route chose to skip a seat; a refusal (proxy down, pool timeout) or a kill says nothing about it.
-    try { run(cpaRoute, (err) => finish(!err)); } catch (err) { console.error("cpa-route ranking:", err.message); finish(false); }
+    // Only a clean exit or "nothing to rank" says cpa-route chose to skip a seat; an outage (exit 2) or a kill says nothing about it.
+    try { run(cpaRoute, (err) => finish(!err || err.code === EXIT_NOTHING_TO_RANK)); } catch (err) { console.error("cpa-route ranking:", err.message); finish(false); }
   }
   function credential(file) {
     try {
