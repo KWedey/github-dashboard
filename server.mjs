@@ -13,6 +13,7 @@ import { createActivity, invalidateDays, API, daysBetween, shift, today } from "
 import { DEFAULT_FEED_URL, coalesceInvalidations, startCadenceFeed } from "./cadence-feed.mjs";
 import { latestLabelTimes } from "./label-times.mjs";
 import { compareFork, githubSlug } from "./upstream-drift.mjs";
+import { createClaudeQuota, quotaWindow } from "./quota.mjs";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const { MAX_RANGE_DAYS } = Dates;
@@ -183,33 +184,13 @@ async function liveData(c, token) {
 }
 
 // ---------- Claude quotas from cpa-route (owner only) ----------
-const USAGE_CACHE = (process.env.CPA_USAGE_CACHE || "~/.config/cpa-route/usage-cache.json").replace(/^~/, process.env.HOME);
-const CPA_ROUTE = (process.env.CPA_ROUTE_BIN || "~/.local/bin/cpa-route").replace(/^~/, process.env.HOME);
-const QUOTA_STALE_MS = 15 * 60 * 1000;
-let quotaRefresh = null;
-function refreshQuota() {
-  if (quotaRefresh || !fs.existsSync(CPA_ROUTE)) return;
-  quotaRefresh = new Promise((resolve) => execFile(CPA_ROUTE, ["ranking"], { timeout: 120 * 1000 }, (err) => { if (err) console.error("cpa-route ranking:", err.message); resolve(); }))
-    .finally(() => { quotaRefresh = null; broadcast("quota", { at: new Date().toISOString() }); });
-}
 const AUTH_DIR = (process.env.CPA_AUTH_DIR || "~/.cli-proxy-api").replace(/^~/, process.env.HOME);
-function orgSuffix(file) {
-  try {
-    const { organization_name: org, email } = JSON.parse(fs.readFileSync(path.join(AUTH_DIR, file), "utf8"));
-    return org && !org.startsWith(`${email}'s`) ? "-team" : "";
-  } catch { return ""; }
-}
-const window_ = (name, pct, resets_at) => ({ name, pct: Math.round(pct), resets_at: resets_at || null });
-function claudeAccounts() {
-  let raw; try { raw = JSON.parse(fs.readFileSync(USAGE_CACHE, "utf8")); } catch { return null; }
-  return Object.entries(raw).filter(([file]) => file.startsWith("claude-")).map(([file, v]) => {
-    const u = v.usage || {}, m = file.match(/^claude-([0-9a-f]+)-(.+?)\.json$/);
-    const fable = (u.limits || []).find((l) => l.kind === "weekly_scoped" && l.scope?.model?.display_name === "Fable");
-    const w = (name, x) => x && typeof x.utilization === "number" ? window_(name, x.utilization, x.resets_at) : { name, pct: null, resets_at: null };
-    return { file, provider: "claude", id: m ? m[1] : file, label: (m ? m[2] : file) + orgSuffix(file), fetched_at: v.fetched_at || null,
-      windows: [w("5 hour", u.five_hour), w("7 day", u.seven_day), fable ? window_("Fable", fable.percent, fable.resets_at) : { name: "Fable", pct: null, resets_at: null }] };
-  });
-}
+const claudeQuota = createClaudeQuota({
+  usageCache: (process.env.CPA_USAGE_CACHE || "~/.config/cpa-route/usage-cache.json").replace(/^~/, process.env.HOME),
+  cpaRoute: (process.env.CPA_ROUTE_BIN || "~/.local/bin/cpa-route").replace(/^~/, process.env.HOME),
+  authDir: AUTH_DIR,
+  onRefreshed: () => broadcast("quota", { at: new Date().toISOString() }),
+});
 const CODEX_UA = "codex-tui/0.149.1 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.149.1)";
 const CODEX_TTL_MS = 5 * 60 * 1000;
 const codexCache = new Map();
@@ -218,7 +199,7 @@ async function codexJson(url, auth) {
   if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
   return r.json();
 }
-const codexWindow = (name, w) => w && typeof w.used_percent === "number" ? window_(name, w.used_percent, w.reset_at ? new Date(w.reset_at * 1000).toISOString() : null) : null;
+const codexWindow = (name, w) => w && typeof w.used_percent === "number" ? quotaWindow(name, w.used_percent, w.reset_at ? new Date(w.reset_at * 1000).toISOString() : null) : null;
 const secondsName = (sec) => sec % 86400 === 0 ? `${sec / 86400} day` : sec % 3600 === 0 ? `${sec / 3600} hour` : `${Math.round(sec / 60)} min`;
 async function codexAccount(file, force) {
   const hit = codexCache.get(file);
@@ -243,12 +224,9 @@ async function codexAccounts(force) {
   return (await Promise.all(files.map((f) => codexAccount(f, force)))).filter(Boolean);
 }
 async function quotaData(force) {
-  const claude = claudeAccounts();
+  const claude = claudeQuota.read(force);
   if (!claude) return { available: false };
-  const fetched = claude.map((a) => Date.parse(a.fetched_at)).filter(Number.isFinite);
-  const oldest = fetched.length ? Math.min(...fetched) : 0;
-  if (force || !oldest || Date.now() - oldest > QUOTA_STALE_MS) refreshQuota();
-  return { available: true, fetched_at: oldest ? new Date(oldest).toISOString() : null, refreshing: Boolean(quotaRefresh), accounts: [...claude, ...(await codexAccounts(force))] };
+  return { available: true, fetched_at: claude.fetched_at, refreshing: claude.refreshing, accounts: [...claude.accounts, ...(await codexAccounts(force))] };
 }
 
 // ---------- upstream drift of this dashboard's own repo ----------
