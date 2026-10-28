@@ -7,7 +7,9 @@ export const QUOTA_STALE_MS = 15 * 60 * 1000;
 export const quotaWindow = (name, pct, resets_at) => ({ name, pct: Math.round(pct), resets_at: resets_at || null });
 const noWindow = (name) => ({ name, pct: null, resets_at: null });
 
-const runRanking = (bin, done) => execFile(bin, ["ranking"], { timeout: 120 * 1000 }, (err) => { if (err) console.error("cpa-route ranking:", err.message); done(err); });
+// A seat cpa-route still calls fresh would look stuck, so its freshness window is pinned to ours.
+const rankingEnv = () => ({ ...process.env, CPA_CACHE_TTL: String(QUOTA_STALE_MS / 1000) });
+const runRanking = (bin, done) => execFile(bin, ["ranking"], { timeout: 120 * 1000, env: rankingEnv() }, (err) => { if (err) console.error("cpa-route ranking:", err.message); done(err); });
 // A spawn failure carries a string code and a kill carries none; only a run that exited says which seats cpa-route skipped.
 const exited = (err) => !err || Number.isInteger(err.code);
 

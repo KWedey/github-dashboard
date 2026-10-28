@@ -206,6 +206,16 @@ test("a ranking run cpa-route refuses with an exit status still marks the seats 
   assert.equal(s.quota.read(false).accounts[0].stale, true);
 });
 
+test("cpa-route ranks with the dashboard's 15-minute freshness window, whatever the environment says", async (t) => {
+  const before = process.env.CPA_CACHE_TTL;
+  process.env.CPA_CACHE_TTL = "3600";
+  t.after(() => { if (before === undefined) delete process.env.CPA_CACHE_TTL; else process.env.CPA_CACHE_TTL = before; });
+  const s = setup({ [LIVE]: entry(20) }, undefined, { real: true, script: '#!/bin/sh\necho "$1 $CPA_CACHE_TTL" > "$0.args"\n' });
+  s.quota.read(false);
+  await s.nextRefresh();
+  assert.equal(fs.readFileSync(`${s.cpaRoute}.args`, "utf8"), "ranking 900\n");
+});
+
 test("a forced read refreshes even right after a refresh", () => {
   const { quota, runs } = setup({ [LIVE]: entry(20) });
   quota.read(false);
