@@ -16,7 +16,7 @@ import { compareFork, githubSlug } from "./upstream-drift.mjs";
 import { createClaudeQuota, quotaWindow, readQuota } from "./quota.mjs";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
-const untilde = (p) => p.replace(/^~/, process.env.HOME);
+const untilde = (p) => p.replace(/^~(?=\/|$)/, () => process.env.HOME);
 const { MAX_RANGE_DAYS } = Dates;
 const PORT = Number(process.env.PORT || 4747);
 const HOST = process.env.HOST || "127.0.0.1";
