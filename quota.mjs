@@ -13,7 +13,7 @@ const runRanking = (bin, done) => execFile(bin, ["ranking"], { timeout: 120 * 10
 // A spawn failure carries a string code and a kill carries none; only a run that exited says which seats cpa-route skipped.
 const exited = (err) => !err || Number.isInteger(err.code);
 
-const isObject = (x) => Boolean(x) && typeof x === "object";
+const isObject = (x) => Boolean(x) && typeof x === "object" && !Array.isArray(x);
 function oldestFetch(seats) {
   const stamps = seats.map((s) => Date.parse(s.fetched_at)).filter(Number.isFinite);
   return stamps.length ? Math.min(...stamps) : null;
@@ -63,9 +63,9 @@ export function createClaudeQuota({ usageCache, authDir, cpaRoute, stuckFile = n
     return Object.entries(raw).filter(([file, v]) => file.startsWith("claude-") && isObject(v) && (!live || live.has(file))).map(([file, v]) => {
       const u = isObject(v.usage) ? v.usage : {}, m = file.match(/^claude-([0-9a-f]+)-(.+?)\.json$/);
       const fable = (Array.isArray(u.limits) ? u.limits : []).find((l) => l?.kind === "weekly_scoped" && l.scope?.model?.display_name === "Fable");
-      const w = (name, x) => x && typeof x.utilization === "number" ? quotaWindow(name, x.utilization, x.resets_at) : noWindow(name);
+      const w = (name, x, pct) => typeof pct === "number" ? quotaWindow(name, pct, x.resets_at) : noWindow(name);
       return { file, provider: "claude", id: m ? m[1] : file, label: (m ? m[2] : file) + teamSuffix(credential(file)), fetched_at: v.fetched_at || null,
-        windows: [w("5 hour", u.five_hour), w("7 day", u.seven_day), fable ? quotaWindow("Fable", fable.percent, fable.resets_at) : noWindow("Fable")] };
+        windows: [w("5 hour", u.five_hour, u.five_hour?.utilization), w("7 day", u.seven_day, u.seven_day?.utilization), w("Fable", fable, fable?.percent)] };
     });
   }
   return {

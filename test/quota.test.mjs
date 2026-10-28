@@ -246,6 +246,22 @@ test("a malformed cache entry is left out instead of failing the whole read", ()
   assert.deepEqual(read.accounts[0].windows.map((w) => w.pct), [12, 30, null]);
 });
 
+test("a Fable limit with no percent reads as no window, not 0% used", () => {
+  const fable = { kind: "weekly_scoped", scope: { model: { display_name: "Fable" } }, percent: null, resets_at: null };
+  const { quota } = setup({ [LIVE]: { ...entry(5), usage: { ...entry(5).usage, limits: [fable] } } });
+  assert.deepEqual(quota.read(false).accounts[0].windows.at(-1), { name: "Fable", pct: null, resets_at: null });
+});
+
+test("a stuck-seat file holding an array is read as empty, so the record it starts survives a restart", () => {
+  const t = setup({}, [], { stuckFile: null });
+  const stuckFile = path.join(t.dir, "stuck.json");
+  fs.writeFileSync(stuckFile, "[]");
+  t.make(stuckFile).read(false);
+  t.runs[0]();
+  t.make(stuckFile).read(false);
+  assert.equal(t.runs.length, 1, "the empty fill run is remembered");
+});
+
 test("a cache file holding no object reads as unavailable", () => {
   const { quota, usageCache, runs } = setup({});
   fs.writeFileSync(usageCache, "null");
