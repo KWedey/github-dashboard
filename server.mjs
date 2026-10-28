@@ -1,5 +1,6 @@
 import http from "node:http";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 import { execFile, execFileSync } from "node:child_process";
@@ -13,8 +14,11 @@ import { createActivity, invalidateDays, API, daysBetween, shift, today } from "
 import { DEFAULT_FEED_URL, coalesceInvalidations, startCadenceFeed } from "./cadence-feed.mjs";
 import { latestLabelTimes } from "./label-times.mjs";
 import { compareFork, githubSlug } from "./upstream-drift.mjs";
+import { createClaudeQuota, listAuthDir, quotaWindow, readQuota } from "./quota.mjs";
+import { createStreams, sseFrame } from "./events.mjs";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
+const untilde = (p) => p.replace(/^~(?=\/|$)/, () => os.homedir());
 const { MAX_RANGE_DAYS } = Dates;
 const PORT = Number(process.env.PORT || 4747);
 const HOST = process.env.HOST || "127.0.0.1";
@@ -183,33 +187,14 @@ async function liveData(c, token) {
 }
 
 // ---------- Claude quotas from cpa-route (owner only) ----------
-const USAGE_CACHE = (process.env.CPA_USAGE_CACHE || "~/.config/cpa-route/usage-cache.json").replace(/^~/, process.env.HOME);
-const CPA_ROUTE = (process.env.CPA_ROUTE_BIN || "~/.local/bin/cpa-route").replace(/^~/, process.env.HOME);
-const QUOTA_STALE_MS = 15 * 60 * 1000;
-let quotaRefresh = null;
-function refreshQuota() {
-  if (quotaRefresh || !fs.existsSync(CPA_ROUTE)) return;
-  quotaRefresh = new Promise((resolve) => execFile(CPA_ROUTE, ["ranking"], { timeout: 120 * 1000 }, (err) => { if (err) console.error("cpa-route ranking:", err.message); resolve(); }))
-    .finally(() => { quotaRefresh = null; broadcast("quota", { at: new Date().toISOString() }); });
-}
-const AUTH_DIR = (process.env.CPA_AUTH_DIR || "~/.cli-proxy-api").replace(/^~/, process.env.HOME);
-function orgSuffix(file) {
-  try {
-    const { organization_name: org, email } = JSON.parse(fs.readFileSync(path.join(AUTH_DIR, file), "utf8"));
-    return org && !org.startsWith(`${email}'s`) ? "-team" : "";
-  } catch { return ""; }
-}
-const window_ = (name, pct, resets_at) => ({ name, pct: Math.round(pct), resets_at: resets_at || null });
-function claudeAccounts() {
-  let raw; try { raw = JSON.parse(fs.readFileSync(USAGE_CACHE, "utf8")); } catch { return null; }
-  return Object.entries(raw).filter(([file]) => file.startsWith("claude-")).map(([file, v]) => {
-    const u = v.usage || {}, m = file.match(/^claude-([0-9a-f]+)-(.+?)\.json$/);
-    const fable = (u.limits || []).find((l) => l.kind === "weekly_scoped" && l.scope?.model?.display_name === "Fable");
-    const w = (name, x) => x && typeof x.utilization === "number" ? window_(name, x.utilization, x.resets_at) : { name, pct: null, resets_at: null };
-    return { file, provider: "claude", id: m ? m[1] : file, label: (m ? m[2] : file) + orgSuffix(file), fetched_at: v.fetched_at || null,
-      windows: [w("5 hour", u.five_hour), w("7 day", u.seven_day), fable ? window_("Fable", fable.percent, fable.resets_at) : { name: "Fable", pct: null, resets_at: null }] };
-  });
-}
+const AUTH_DIR = untilde(process.env.CPA_AUTH_DIR || "~/.cli-proxy-api");
+const claudeQuota = createClaudeQuota({
+  usageCache: untilde(process.env.CPA_USAGE_CACHE || "~/.config/cpa-route/usage-cache.json"),
+  cpaRoute: untilde(process.env.CPA_ROUTE_BIN || "~/.local/bin/cpa-route"),
+  authDir: AUTH_DIR,
+  stuckFile: path.join(CACHE_DIR, "quota-stuck-seats.json"),
+  onRefreshed: () => streams.broadcast("quota", { at: new Date().toISOString() }, (s) => s.owner),
+});
 const CODEX_UA = "codex-tui/0.149.1 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.149.1)";
 const CODEX_TTL_MS = 5 * 60 * 1000;
 const codexCache = new Map();
@@ -218,7 +203,7 @@ async function codexJson(url, auth) {
   if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
   return r.json();
 }
-const codexWindow = (name, w) => w && typeof w.used_percent === "number" ? window_(name, w.used_percent, w.reset_at ? new Date(w.reset_at * 1000).toISOString() : null) : null;
+const codexWindow = (name, w) => w && typeof w.used_percent === "number" ? quotaWindow(name, w.used_percent, w.reset_at ? new Date(w.reset_at * 1000).toISOString() : null) : null;
 const secondsName = (sec) => sec % 86400 === 0 ? `${sec / 86400} day` : sec % 3600 === 0 ? `${sec / 3600} hour` : `${Math.round(sec / 60)} min`;
 async function codexAccount(file, force) {
   const hit = codexCache.get(file);
@@ -238,17 +223,9 @@ async function codexAccount(file, force) {
   codexCache.set(file, { at: Date.now(), data: base });
   return base;
 }
-async function codexAccounts(force) {
-  let files; try { files = fs.readdirSync(AUTH_DIR).filter((f) => f.startsWith("codex-") && f.endsWith(".json")); } catch { return []; }
-  return (await Promise.all(files.map((f) => codexAccount(f, force)))).filter(Boolean);
-}
-async function quotaData(force) {
-  const claude = claudeAccounts();
-  if (!claude) return { available: false };
-  const fetched = claude.map((a) => Date.parse(a.fetched_at)).filter(Number.isFinite);
-  const oldest = fetched.length ? Math.min(...fetched) : 0;
-  if (force || !oldest || Date.now() - oldest > QUOTA_STALE_MS) refreshQuota();
-  return { available: true, fetched_at: oldest ? new Date(oldest).toISOString() : null, refreshing: Boolean(quotaRefresh), accounts: [...claude, ...(await codexAccounts(force))] };
+async function codexAccounts(force, files) {
+  const codex = (files || []).filter((f) => f.startsWith("codex-") && f.endsWith(".json"));
+  return (await Promise.all(codex.map((f) => codexAccount(f, force)))).filter(Boolean);
 }
 
 // ---------- upstream drift of this dashboard's own repo ----------
@@ -270,7 +247,7 @@ function upstreamDrift(c) {
 
 // ---------- local repos (owner only, repos.mjs) ----------
 const localRepos = createRepoScanner({
-  roots: (process.env.REPO_ROOTS || "~,~/Studio").split(",").map((r) => r.trim().replace(/^~/, process.env.HOME)).filter(Boolean),
+  roots: (process.env.REPO_ROOTS || "~,~/Studio").split(",").map((r) => untilde(r.trim())).filter(Boolean),
   skip: new Set([...DEFAULT_SKIP, ...(process.env.REPO_SKIP || "Dropbox (Personal),TrainerRoad Dropbox").split(",").map((x) => x.trim()).filter(Boolean)]),
   file: path.join(CACHE_DIR, "local-repos.json"),
   log: (m) => console.log(m),
@@ -278,29 +255,17 @@ const localRepos = createRepoScanner({
 if (ownerToken && !DEMO) localRepos.list().catch((e) => console.log(`local repo scan failed: ${e.message}`)); // ready before the first page asks
 
 // ---------- browser event stream + Cadence webhook feed ----------
-const browserStreams = new Set();
 let feedStatus = { state: "off", detail: DEMO ? "demo mode" : "CADENCE_FEED_KEY not set" };
-function sseFrame(event, data) { return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`; }
-function broadcast(event, data, logins) {
-  for (const s of browserStreams) if (!logins || logins.has(s.login.toLowerCase())) s.res.write(sseFrame(event, data));
-}
-function openBrowserStream(req, res, login) {
-  res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache, no-store, no-transform", Connection: "keep-alive", "X-Accel-Buffering": "no" });
-  res.write(sseFrame("feed", feedStatus));
-  const entry = { res, login };
-  browserStreams.add(entry);
-  const ping = setInterval(() => res.write(": ping\n\n"), 25 * 1000);
-  req.on("close", () => { clearInterval(ping); browserStreams.delete(entry); });
-}
+const streams = createStreams({ first: () => sseFrame("feed", feedStatus) });
 function invalidate(logins, reason) {
   const t = today(), y = shift(t, -1);
   for (const [login, cache] of caches) {
     if (logins && !logins.has(login.toLowerCase())) continue;
     invalidateDays(cache, [t, y]);
   }
-  broadcast("refresh", { reason, at: new Date().toISOString() }, logins);
+  streams.broadcast("refresh", { reason, at: new Date().toISOString() }, (s) => !logins || logins.has(s.login.toLowerCase()));
 }
-if (!DEMO) startCadenceFeed({ key: CADENCE_FEED_KEY, url: CADENCE_FEED_URL, onInvalidate: coalesceInvalidations(invalidate), onStatus: (st) => { feedStatus = st; console.log(`cadence feed: ${st.state}${st.detail ? ` (${st.detail})` : ""}`); broadcast("feed", st); } });
+if (!DEMO) startCadenceFeed({ key: CADENCE_FEED_KEY, url: CADENCE_FEED_URL, onInvalidate: coalesceInvalidations(invalidate), onStatus: (st) => { feedStatus = st; console.log(`cadence feed: ${st.state}${st.detail ? ` (${st.detail})` : ""}`); streams.broadcast("feed", st); } });
 
 // ---------- background warm for every known token ----------
 let warming = false;
@@ -336,7 +301,7 @@ const server = http.createServer(async (req, res) => {
       if (url.pathname === "/api/repos") return send(res, 200, { repos: demoRepos });
       if (url.pathname === "/api/quota") return send(res, 200, demoQuota());
       if (url.pathname === "/api/upstream") return send(res, 200, demoUpstream());
-      if (url.pathname === "/api/events") return openBrowserStream(req, res, "octocat");
+      if (url.pathname === "/api/events") return streams.open(req, res, { login: "octocat", owner: true });
       if (url.pathname === "/api/daily") {
         const to = url.searchParams.get("to") || today(), from = url.searchParams.get("from") || to, days = daysBetween(from, to);
         return send(res, 200, { user: "octocat", from, to, today: today(), days, metrics: demoDaily(days, today()) });
@@ -382,10 +347,10 @@ const server = http.createServer(async (req, res) => {
       const c = client(s.token);
       if (url.pathname === "/api/live" && url.searchParams.get("saved") === "1") return send(res, 200, lastLive(s.token) || { none: true });
       if (url.pathname === "/api/live") return send(res, 200, await liveData(c, s.token));
-      if (url.pathname === "/api/events") return openBrowserStream(req, res, await c.me());
+      if (url.pathname === "/api/events") return streams.open(req, res, { login: await c.me(), owner: Boolean(s.owner) });
       if (url.pathname === "/api/me") return send(res, 200, { login: await c.me(), owner: Boolean(s.owner) });
       if (url.pathname === "/api/repos") return send(res, 200, { repos: s.owner ? await localRepos.list() : [] });
-      if (url.pathname === "/api/quota") return send(res, 200, s.owner ? await quotaData(url.searchParams.get("force") === "1") : { available: false });
+      if (url.pathname === "/api/quota") return send(res, 200, s.owner ? await readQuota(claudeQuota, codexAccounts, url.searchParams.get("force") === "1", listAuthDir(AUTH_DIR)) : { available: false });
       if (url.pathname === "/api/upstream") return send(res, 200, s.owner ? await upstreamDrift(c) : { available: false });
       if (url.pathname === "/api/daily") {
         const to = url.searchParams.get("to") || today(), from = url.searchParams.get("from") || to;

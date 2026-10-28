@@ -86,6 +86,7 @@ section > header .sub { font-size:12.5px; color:var(--muted) }
 .qcard .who { display:flex; align-items:baseline; gap:8px; font-weight:600; font-size:13px; min-width:0 } .qcard .who .email { overflow:hidden; text-overflow:ellipsis; white-space:nowrap } .qcard .who .used { margin-left:auto; font-weight:500; font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em }
 .qcard .who .id { white-space:nowrap; font-weight:400; font-size:11px; color:var(--muted); font-family:ui-monospace,SFMono-Regular,Menlo,monospace }
 .qcard.spent { border-color:var(--bad) }
+.qcard.stale .qrow { opacity:.55 }
 .qrow { display:grid; grid-template-columns:72px 1fr 44px; align-items:center; gap:10px; font-size:12px }
 .qrow .qn { color:var(--ink2); font-weight:500 } .qrow .qv { text-align:right; font-weight:700; font-variant-numeric:tabular-nums }
 .qrow .qbar { height:6px; border-radius:3px; background:var(--grid); overflow:hidden } .qrow .qbar i { display:block; height:100% ; border-radius:3px; background:var(--accent) }
@@ -329,6 +330,7 @@ table { table-layout:fixed } th:first-child, td:first-child { width:auto } td.nu
 <script src="/dates.js"></script>
 <script src="/triage.js"></script>
 <script src="/loads.js"></script>
+<script src="/quota-view.js"></script>
 <script>
 const $ = (s) => document.querySelector(s);
 (function () { let t = "dark"; try { t = JSON.parse(localStorage.getItem("ghdash:theme")) || "dark"; } catch {} document.documentElement.dataset.theme = t;
@@ -435,7 +437,7 @@ async function loadUpstream() {
     el.title = `${d.upstream} has ${d.ahead} commit${d.ahead === 1 ? "" : "s"} your fork does not${d.behind ? `; your fork has ${d.behind} it does not` : ""}:\n` + d.commits.map((x) => `${x.sha} ${x.title} (${x.author}${x.at ? `, ${ago(x.at)} ago` : ""})`).join("\n") + `\n\ngit fetch upstream && git merge upstream/${d.branch}`;
   } catch (e) { el.hidden = true; console.warn("upstream:", e.message); }
 }
-const untilText = (iso) => { if (!iso) return ""; const mins = Math.round((new Date(iso) - Date.now()) / 60000); if (mins <= 0) return "resetting"; const h = Math.floor(mins / 60), m = mins % 60; return h >= 48 ? `${Math.floor(h / 24)}d ${h % 24}h` : h ? `${h}h ${String(m).padStart(2, "0")}m` : `${m}m`; };
+const { untilText, windowView, cardStale, cardSpent } = QuotaView;
 const whenText = (iso) => { if (!iso) return ""; const d = new Date(iso), sameDay = dayKey(d) === today(); return d.toLocaleString([], sameDay ? { hour: "numeric", minute: "2-digit" } : { weekday: "short", hour: "numeric", minute: "2-digit" }); };
 async function loadQuota(force) {
   try { quota = await api(`/api/quota${force ? "?force=1" : ""}`); renderQuota(); } catch (e) { console.warn("quota:", e.message); }
@@ -450,13 +452,14 @@ function renderQuota() {
   const shared = domains.size === 1 ? [...domains][0] : null;
   const shortLabel = (label) => shared ? label.replace(`@${shared}`, "") : label;
   $("#quotaGrid").innerHTML = accounts.map((a) => {
-    const spent = a.windows.some((w) => /^(5 hour|7 day)$/.test(w.name) && (w.pct || 0) >= 95);
-    return `<div class="qcard${spent ? " spent" : ""}"><div class="who"><span class="email" title="${esc(a.label)} · ${esc(a.file)}${a.fetched_at ? ` · as of ${ago(a.fetched_at)} ago` : ""}">${esc(shortLabel(a.label))}</span><span class="id">${a.provider === "claude" ? "" : esc(a.provider) + " "}${esc(a.id.slice(0, 4))}</span><span class="used">used</span></div>` +
+    const spent = cardSpent(a), stale = cardStale(a);
+    return `<div class="qcard${spent ? " spent" : ""}${stale ? " stale" : ""}"><div class="who"><span class="email" title="${esc(a.label)} · ${esc(a.file)}${a.fetched_at ? ` · as of ${ago(a.fetched_at)} ago` : ""}">${esc(shortLabel(a.label))}</span><span class="id">${a.provider === "claude" ? "" : esc(a.provider) + " "}${esc(a.id.slice(0, 4))}</span><span class="used">used</span></div>` +
       a.windows.map((w) => { if (w.pct === null) return `<div class="qrow"><span class="qn">${esc(w.name)}</span><span class="qbar"></span><span class="qv">–</span><span class="qreset">no window reported</span></div>`;
-        const cls = w.pct >= 95 ? " bad" : w.pct >= 75 ? " warn" : "", state = w.pct >= 95 ? "Spent" : w.pct >= 75 ? "Warning" : "";
-        return `<div class="qrow${cls}"><span class="qn">${esc(w.name)}</span><span class="qbar"><i style="width:${Math.min(100, w.pct)}%"></i></span><span class="qv">${w.pct}%</span>
-          <span class="qreset"><span>${state ? `<b>${state}</b> · ` : ""}${w.resets_at ? `resets in <b>${untilText(w.resets_at)}</b>` : w.pct ? "reset unknown" : "unused"}</span><span>${w.resets_at ? whenText(w.resets_at) : ""}</span></span></div>`; }).join("") +
+        const v = windowView(w, { stale });
+        return `<div class="qrow${v.cls}"><span class="qn">${esc(w.name)}</span><span class="qbar"><i style="width:${Math.min(100, w.pct)}%"></i></span><span class="qv">${w.pct}%</span>
+          <span class="qreset"><span>${v.state ? `<b>${v.state}</b> · ` : ""}${v.reset}</span><span>${v.showWhen ? whenText(w.resets_at) : ""}</span></span></div>`; }).join("") +
       (a.resets ? `<div class="qnote">Manual resets: <b>${a.resets.available ?? "?"}</b> available${a.resets.expires_at ? `, first expires ${whenText(a.resets.expires_at)} (${untilText(a.resets.expires_at)})` : ""}</div>` : "") +
+      (stale ? `<div class="qnote"><b>Stale</b> · as of ${a.fetched_at ? ago(a.fetched_at) + " ago" : "?"}; ${a.stale ? "cpa-route did not refresh this seat" : "no refresh has landed since"}</div>` : "") +
       (a.error ? `<div class="qnote">⚠️ ${esc(a.error)}</div>` : "") + "</div>";
   }).join("");
   $("#quotaSub").textContent = `${accounts.length} accounts${shared ? ` @${shared}` : ""} · as of ${quota.fetched_at ? ago(quota.fetched_at) + " ago" : "?"}${quota.refreshing ? " · refreshing" : ""} · Claude via cpa-route, Codex via chatgpt.com`;
