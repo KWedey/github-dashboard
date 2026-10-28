@@ -196,12 +196,17 @@ test("a ranking run killed by its timeout marks no seat stuck", () => {
   assert.equal(quota.read(false).accounts[0].stale, undefined);
 });
 
-test("a ranking run cpa-route refuses with an exit status still marks the seats it left unchanged", async (t) => {
+test("a ranking run cpa-route refuses with a non-zero exit marks no seat stuck, and the next waits out the floor", async (t) => {
   t.mock.method(console, "error", () => {});
-  const s = setup({ [DISABLED]: entry(20) }, undefined, { real: true, script: "#!/bin/sh\nexit 2\n" });
+  const s = setup({ [LIVE]: entry(20) }, undefined, { real: true, script: "#!/bin/sh\nexit 2\n" });
   s.quota.read(false);
   await s.nextRefresh();
-  assert.equal(s.quota.read(false).accounts[0].stale, true);
+  assert.equal(s.quota.read(false).accounts[0].stale, undefined);
+  s.clock.now += QUOTA_STALE_MS;
+  assert.equal(s.quota.read(false).refreshing, false, "the floor holds");
+  s.clock.now += 1;
+  assert.equal(s.quota.read(false).refreshing, true, "then the seat starts the next run");
+  await s.nextRefresh();
 });
 
 test("cpa-route ranks with the dashboard's 15-minute freshness window, whatever the environment says", async (t) => {
