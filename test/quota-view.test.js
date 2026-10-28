@@ -19,7 +19,18 @@ test("a stale window has no spent or warning state", () => {
 
 test("a stale window whose reset is behind us says reset passed, not resetting", () => {
   assert.deepEqual(windowView({ name: "5 hour", pct: 100, resets_at: at(-30) }, { stale: true, now: NOW }), { cls: "", state: "", reset: "reset passed", showWhen: false });
-  assert.equal(windowView({ name: "5 hour", pct: 100, resets_at: at(-30) }, { now: NOW }).reset, "resets in <b>resetting</b>", "a live card's numbers are current, so it is resetting now");
+  assert.equal(windowView({ name: "5 hour", pct: 100, resets_at: at(-30) }, { now: NOW }).reset, "<b>resetting</b>", "a live card's numbers are current, so it is resetting now");
+});
+
+test("a reset under a minute away reads resetting, not resets in resetting", () => {
+  const soon = new Date(NOW + 20e3).toISOString();
+  assert.equal(windowView({ name: "5 hour", pct: 100, resets_at: soon }, { now: NOW }).reset, "<b>resetting</b>");
+  assert.deepEqual(windowView({ name: "5 hour", pct: 100, resets_at: soon }, { stale: true, now: NOW }), { cls: "", state: "", reset: "<b>resetting</b>", showWhen: true });
+});
+
+test("an unparseable reset time reads as unknown, with no date beside it", () => {
+  assert.deepEqual(windowView({ name: "7 day", pct: 40, resets_at: "soon" }, { now: NOW }), { cls: "", state: "", reset: "reset unknown", showWhen: false });
+  assert.deepEqual(windowView({ name: "7 day", pct: 40, resets_at: "soon" }, { stale: true, now: NOW }), { cls: "", state: "", reset: "reset unknown", showWhen: false });
 });
 
 test("a stale card never shows as spent", () => {
