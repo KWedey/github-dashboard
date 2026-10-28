@@ -7,7 +7,9 @@ export const QUOTA_STALE_MS = 15 * 60 * 1000;
 export const quotaWindow = (name, pct, resets_at) => ({ name, pct: Math.round(pct), resets_at: resets_at || null });
 const noWindow = (name) => ({ name, pct: null, resets_at: null });
 
-const runRanking = (bin, done) => execFile(bin, ["ranking"], { timeout: 120 * 1000 }, (err) => { if (err) console.error("cpa-route ranking:", err.message); done(); });
+const runRanking = (bin, done) => execFile(bin, ["ranking"], { timeout: 120 * 1000 }, (err) => { if (err) console.error("cpa-route ranking:", err.message); done(err); });
+// A spawn failure carries a string code and a kill carries none; only a run that exited says which seats cpa-route skipped.
+const exited = (err) => !err || Number.isInteger(err.code);
 
 const isObject = (x) => Boolean(x) && typeof x === "object";
 function oldestFetch(seats) {
@@ -43,7 +45,7 @@ export function createClaudeQuota({ usageCache, authDir, cpaRoute, stuckFile = n
     refreshing = true; lastStart = now();
     const owed = new Map(seats.filter((a) => isStale(a.fetched_at, lastStart)).map((a) => [a.file, a.fetched_at]));
     const finish = (ran) => { refreshing = false; if (ran) settle(owed); onRefreshed(); };
-    try { run(cpaRoute, () => finish(true)); } catch (err) { console.error("cpa-route ranking:", err.message); finish(false); }
+    try { run(cpaRoute, (err) => finish(exited(err))); } catch (err) { console.error("cpa-route ranking:", err.message); finish(false); }
   }
   function credential(file) {
     try {

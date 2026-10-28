@@ -10,15 +10,17 @@ const LIVE = "claude-1a2b3c4d-octocat@acme.com.json", RETIRED = "claude-5e6f7a8b
 const DISABLED = "claude-9c0d1e2f-hubot@acme.com.json", RESERVED = "claude-3a4b5c6d-monalisa@acme.com.json";
 const entry = (minutesOld) => ({ fetched_at: new Date(NOW - minutesOld * 60e3).toISOString(), usage: { five_hour: { utilization: 12, resets_at: null }, seven_day: { utilization: 30, resets_at: null } } });
 
-function setup(cache, credentials = Object.keys(cache), { run, stuckFile } = {}) {
+function setup(cache, credentials = Object.keys(cache), { run, stuckFile, real = false, script = "" } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "quota-test-")), authDir = path.join(dir, "auth"), usageCache = path.join(dir, "usage-cache.json"), cpaRoute = path.join(dir, "cpa-route");
   fs.mkdirSync(authDir);
   for (const file of credentials) fs.writeFileSync(path.join(authDir, file), JSON.stringify({ email: "octocat@acme.com" }));
   fs.writeFileSync(usageCache, JSON.stringify(cache));
-  fs.writeFileSync(cpaRoute, "");
-  const runs = [], clock = { now: NOW };
+  fs.writeFileSync(cpaRoute, script, { mode: script ? 0o755 : 0o644 });
+  const runs = [], clock = { now: NOW }, waiters = [];
   let refreshed = 0;
-  const make = (file = stuckFile) => createClaudeQuota({ usageCache, authDir, cpaRoute, stuckFile: file, now: () => clock.now, run: run || ((bin, done) => runs.push(done)), onRefreshed: () => refreshed++ });
+  const onRefreshed = () => { refreshed++; for (const wake of waiters.splice(0)) wake(); };
+  const make = (file = stuckFile) => createClaudeQuota({ usageCache, authDir, cpaRoute, stuckFile: file, now: () => clock.now, run: real ? undefined : run || ((bin, done) => runs.push(done)), onRefreshed });
+  const nextRefresh = () => new Promise((wake) => waiters.push(wake));
   // What a ranking run (or cpa-route's hourly apply) writes for a seat it refetched.
   const fetched = (file, minutesOld = 0) => {
     const c = JSON.parse(fs.readFileSync(usageCache, "utf8"));
@@ -26,7 +28,7 @@ function setup(cache, credentials = Object.keys(cache), { run, stuckFile } = {})
     fs.writeFileSync(usageCache, JSON.stringify(c));
   };
   test.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  return { quota: make(), make, runs, clock, dir, authDir, usageCache, fetched, refreshes: () => refreshed };
+  return { quota: make(), make, runs, clock, dir, authDir, usageCache, cpaRoute, fetched, nextRefresh, refreshes: () => refreshed };
 }
 const minutes = (n) => n * 60e3;
 // Reads across two hours, finishing every run without touching the seat: cpa-route never refreshes it.
@@ -176,6 +178,32 @@ test("a ranking run that throws on start is not left in flight and still arms th
   assert.equal(starts, 1);
   quota.read(true);
   assert.equal(starts, 2);
+});
+
+test("a cpa-route that cannot be started marks no seat stuck", async (t) => {
+  t.mock.method(console, "error", () => {});
+  const s = setup({ [LIVE]: entry(20) }, undefined, { real: true });
+  s.quota.read(false);
+  await s.nextRefresh();
+  assert.equal(s.quota.read(false).accounts[0].stale, undefined);
+  s.clock.now += QUOTA_STALE_MS + 1;
+  assert.equal(s.quota.read(false).refreshing, true, "the seat still counts, so the next run starts once the floor passes");
+  await s.nextRefresh();
+});
+
+test("a ranking run killed by its timeout marks no seat stuck", () => {
+  const { quota, runs } = setup({ [LIVE]: entry(20) });
+  quota.read(false);
+  runs[0](Object.assign(new Error("cpa-route ranking timed out"), { code: null, killed: true, signal: "SIGTERM" }));
+  assert.equal(quota.read(false).accounts[0].stale, undefined);
+});
+
+test("a ranking run cpa-route refuses with an exit status still marks the seats it left unchanged", async (t) => {
+  t.mock.method(console, "error", () => {});
+  const s = setup({ [DISABLED]: entry(20) }, undefined, { real: true, script: "#!/bin/sh\nexit 2\n" });
+  s.quota.read(false);
+  await s.nextRefresh();
+  assert.equal(s.quota.read(false).accounts[0].stale, true);
 });
 
 test("a forced read refreshes even right after a refresh", () => {
