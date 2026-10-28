@@ -13,7 +13,7 @@ import { createActivity, invalidateDays, API, daysBetween, shift, today } from "
 import { DEFAULT_FEED_URL, coalesceInvalidations, startCadenceFeed } from "./cadence-feed.mjs";
 import { latestLabelTimes } from "./label-times.mjs";
 import { compareFork, githubSlug } from "./upstream-drift.mjs";
-import { createClaudeQuota, quotaWindow, readQuota } from "./quota.mjs";
+import { createClaudeQuota, listAuthDir, quotaWindow, readQuota } from "./quota.mjs";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const untilde = (p) => p.replace(/^~(?=\/|$)/, () => process.env.HOME);
@@ -190,6 +190,7 @@ const claudeQuota = createClaudeQuota({
   usageCache: untilde(process.env.CPA_USAGE_CACHE || "~/.config/cpa-route/usage-cache.json"),
   cpaRoute: untilde(process.env.CPA_ROUTE_BIN || "~/.local/bin/cpa-route"),
   authDir: AUTH_DIR,
+  stuckFile: path.join(CACHE_DIR, "quota-stuck-seats.json"),
   onRefreshed: () => broadcast("quota", { at: new Date().toISOString() }),
 });
 const CODEX_UA = "codex-tui/0.149.1 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.149.1)";
@@ -220,9 +221,9 @@ async function codexAccount(file, force) {
   codexCache.set(file, { at: Date.now(), data: base });
   return base;
 }
-async function codexAccounts(force) {
-  let files; try { files = fs.readdirSync(AUTH_DIR).filter((f) => f.startsWith("codex-") && f.endsWith(".json")); } catch { return []; }
-  return (await Promise.all(files.map((f) => codexAccount(f, force)))).filter(Boolean);
+async function codexAccounts(force, files) {
+  const codex = (files || []).filter((f) => f.startsWith("codex-") && f.endsWith(".json"));
+  return (await Promise.all(codex.map((f) => codexAccount(f, force)))).filter(Boolean);
 }
 
 // ---------- upstream drift of this dashboard's own repo ----------
@@ -359,7 +360,7 @@ const server = http.createServer(async (req, res) => {
       if (url.pathname === "/api/events") return openBrowserStream(req, res, await c.me());
       if (url.pathname === "/api/me") return send(res, 200, { login: await c.me(), owner: Boolean(s.owner) });
       if (url.pathname === "/api/repos") return send(res, 200, { repos: s.owner ? await localRepos.list() : [] });
-      if (url.pathname === "/api/quota") return send(res, 200, s.owner ? await readQuota(claudeQuota, codexAccounts, url.searchParams.get("force") === "1") : { available: false });
+      if (url.pathname === "/api/quota") return send(res, 200, s.owner ? await readQuota(claudeQuota, codexAccounts, url.searchParams.get("force") === "1", listAuthDir(AUTH_DIR)) : { available: false });
       if (url.pathname === "/api/upstream") return send(res, 200, s.owner ? await upstreamDrift(c) : { available: false });
       if (url.pathname === "/api/daily") {
         const to = url.searchParams.get("to") || today(), from = url.searchParams.get("from") || to;
