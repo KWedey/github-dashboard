@@ -50,7 +50,13 @@ test("a cache entry for a credential no longer on disk is neither shown nor coun
 test("an orphan seat starts no ranking run, however long it sits", () => {
   const t = setup({ [RETIRED]: entry(36 * 60) }, []);
   assert.deepEqual(readsOverTwoHoursNeverRefetching(t).accounts, []);
-  assert.equal(t.runs.length, 1, "only the empty-cache fill");
+  assert.equal(t.runs.length, 0, "with no Claude credential on disk, cpa-route has nothing to rank");
+});
+
+test("an auth folder holding only Codex credentials starts no ranking run, however long it sits", () => {
+  const t = setup({}, ["codex-7e8f9a0b-octocat@acme.com.json"]);
+  assert.deepEqual(readsOverTwoHoursNeverRefetching(t).accounts, []);
+  assert.equal(t.runs.length, 0);
 });
 
 test("a disabled seat starts one ranking run, then shows as stale and starts no more", () => {
@@ -161,7 +167,7 @@ test("after a fill run finds no seat, a seat that later lands in the cache start
 });
 
 test("a cache with no Claude seat yet starts a ranking run to fill it", () => {
-  const { quota, runs } = setup({});
+  const { quota, runs } = setup({}, [LIVE]);
   assert.deepEqual(quota.read(false), { accounts: [], fetched_at: null, refreshing: true });
   assert.equal(runs.length, 1);
 });
@@ -256,7 +262,7 @@ test("a Fable limit with no percent reads as no window, not 0% used", () => {
 });
 
 test("a stuck-seat file holding an array is read as empty, so the record it starts survives a restart", () => {
-  const t = setup({}, [], { stuckFile: null });
+  const t = setup({}, [LIVE], { stuckFile: null });
   const stuckFile = path.join(t.dir, "stuck.json");
   fs.writeFileSync(stuckFile, "[]");
   t.make(stuckFile).read(false);

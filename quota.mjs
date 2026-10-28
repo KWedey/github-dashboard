@@ -12,6 +12,7 @@ const rankingEnv = () => ({ ...process.env, CPA_CACHE_TTL: String(QUOTA_STALE_MS
 const runRanking = (bin, done) => execFile(bin, ["ranking"], { timeout: 120 * 1000, env: rankingEnv() }, (err) => { if (err) console.error("cpa-route ranking:", err.message); done(err); });
 
 const isObject = (x) => Boolean(x) && typeof x === "object" && !Array.isArray(x);
+const isClaudeCredential = (file) => file.startsWith("claude-") && file.endsWith(".json");
 function oldestFetch(seats) {
   const stamps = seats.map((s) => Date.parse(s.fetched_at)).filter(Number.isFinite);
   return stamps.length ? Math.min(...stamps) : null;
@@ -73,7 +74,9 @@ export function createClaudeQuota({ usageCache, authDir, cpaRoute, stuckFile = n
       if (!claude) return null;
       const counted = claude.filter((a) => !isStuck(a)), oldest = oldestFetch(counted.length ? counted : claude);
       const stale = oldest === null || now() - oldest > QUOTA_STALE_MS;
-      if (force || (stale && (counted.length || (!claude.length && !Object.hasOwn(stuck, EMPTY))))) refresh(force, claude);
+      // cpa-route refuses with exit 2 when the auth folder holds no Claude credential, and a refusal records no EMPTY.
+      const fillable = !files || files.some(isClaudeCredential);
+      if (force || (stale && (counted.length || (!claude.length && fillable && !Object.hasOwn(stuck, EMPTY))))) refresh(force, claude);
       return { accounts: claude.map((a) => isStuck(a) ? { ...a, stale: true } : a), fetched_at: oldest === null ? null : new Date(oldest).toISOString(), refreshing };
     },
   };
