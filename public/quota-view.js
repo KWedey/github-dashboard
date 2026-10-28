@@ -5,6 +5,9 @@
   if (typeof module === "object" && module.exports) module.exports = api; else root.QuotaView = api;
 })(this, function () {
   const SPENT_PCT = 95, WARN_PCT = 75;
+  // A healthy seat peaks near 22 min old: the 15-min window, the page's 5-min poll, a run of up to 2 min.
+  // Past two windows at least one refresh has failed, so the numbers are no longer current.
+  const OLD_AFTER_MS = 30 * 60 * 1000;
   function untilText(iso, now = Date.now()) {
     const at = Date.parse(iso);
     if (!Number.isFinite(at)) return "";
@@ -20,6 +23,7 @@
     const reset = resetPassed ? "reset passed" : until === "resetting" ? "<b>resetting</b>" : until ? `resets in <b>${until}</b>` : w.pct ? "reset unknown" : "unused";
     return { cls: level ? ` ${level}` : "", state: { bad: "Spent", warn: "Warning" }[level] || "", reset, showWhen: Boolean(until) && !resetPassed };
   }
-  const cardSpent = (a) => !a.stale && a.windows.some((w) => /^(5 hour|7 day)$/.test(w.name) && (w.pct || 0) >= SPENT_PCT);
-  return { untilText, windowView, cardSpent };
+  const cardStale = (a, now = Date.now()) => Boolean(a.stale) || now - Date.parse(a.fetched_at) > OLD_AFTER_MS;
+  const cardSpent = (a, now = Date.now()) => !cardStale(a, now) && a.windows.some((w) => /^(5 hour|7 day)$/.test(w.name) && (w.pct || 0) >= SPENT_PCT);
+  return { untilText, windowView, cardStale, cardSpent, OLD_AFTER_MS };
 });

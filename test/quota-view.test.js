@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { windowView, cardSpent } = require("../public/quota-view.js");
+const { windowView, cardStale, cardSpent, OLD_AFTER_MS } = require("../public/quota-view.js");
 
 const NOW = Date.parse("2026-10-28T12:00:00Z");
 const at = (hours) => new Date(NOW + hours * 3600e3).toISOString();
@@ -37,4 +37,13 @@ test("a stale card never shows as spent", () => {
   const windows = [{ name: "7 day", pct: 100, resets_at: at(-1) }];
   assert.equal(cardSpent({ windows }), true);
   assert.equal(cardSpent({ windows, stale: true }), false);
+});
+
+test("a card whose numbers are older than two windows is stale without the stuck mark", () => {
+  const card = (minutesOld) => ({ fetched_at: new Date(NOW - minutesOld * 60e3).toISOString(), windows: [{ name: "5 hour", pct: 100, resets_at: at(2) }] });
+  assert.equal(OLD_AFTER_MS, 30 * 60e3);
+  assert.equal(cardStale(card(22), NOW), false, "a healthy seat's oldest is about 22 min");
+  assert.equal(cardSpent(card(22), NOW), true);
+  assert.equal(cardStale(card(180), NOW), true, "proxy down for 3 h");
+  assert.equal(cardSpent(card(180), NOW), false, "hours-old Spent is not shown as current");
 });
