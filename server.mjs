@@ -14,6 +14,7 @@ import { DEFAULT_FEED_URL, coalesceInvalidations, startCadenceFeed } from "./cad
 import { latestLabelTimes } from "./label-times.mjs";
 import { compareFork, githubSlug } from "./upstream-drift.mjs";
 import { createClaudeQuota, listAuthDir, quotaWindow, readQuota } from "./quota.mjs";
+import { createStreams, sseFrame } from "./events.mjs";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const untilde = (p) => p.replace(/^~(?=\/|$)/, () => process.env.HOME);
@@ -191,7 +192,7 @@ const claudeQuota = createClaudeQuota({
   cpaRoute: untilde(process.env.CPA_ROUTE_BIN || "~/.local/bin/cpa-route"),
   authDir: AUTH_DIR,
   stuckFile: path.join(CACHE_DIR, "quota-stuck-seats.json"),
-  onRefreshed: () => broadcast("quota", { at: new Date().toISOString() }),
+  onRefreshed: () => streams.broadcast("quota", { at: new Date().toISOString() }, (s) => s.owner),
 });
 const CODEX_UA = "codex-tui/0.149.1 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.149.1)";
 const CODEX_TTL_MS = 5 * 60 * 1000;
@@ -253,29 +254,17 @@ const localRepos = createRepoScanner({
 if (ownerToken && !DEMO) localRepos.list().catch((e) => console.log(`local repo scan failed: ${e.message}`)); // ready before the first page asks
 
 // ---------- browser event stream + Cadence webhook feed ----------
-const browserStreams = new Set();
 let feedStatus = { state: "off", detail: DEMO ? "demo mode" : "CADENCE_FEED_KEY not set" };
-function sseFrame(event, data) { return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`; }
-function broadcast(event, data, logins) {
-  for (const s of browserStreams) if (!logins || logins.has(s.login.toLowerCase())) s.res.write(sseFrame(event, data));
-}
-function openBrowserStream(req, res, login) {
-  res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache, no-store, no-transform", Connection: "keep-alive", "X-Accel-Buffering": "no" });
-  res.write(sseFrame("feed", feedStatus));
-  const entry = { res, login };
-  browserStreams.add(entry);
-  const ping = setInterval(() => res.write(": ping\n\n"), 25 * 1000);
-  req.on("close", () => { clearInterval(ping); browserStreams.delete(entry); });
-}
+const streams = createStreams({ first: () => sseFrame("feed", feedStatus) });
 function invalidate(logins, reason) {
   const t = today(), y = shift(t, -1);
   for (const [login, cache] of caches) {
     if (logins && !logins.has(login.toLowerCase())) continue;
     invalidateDays(cache, [t, y]);
   }
-  broadcast("refresh", { reason, at: new Date().toISOString() }, logins);
+  streams.broadcast("refresh", { reason, at: new Date().toISOString() }, (s) => !logins || logins.has(s.login.toLowerCase()));
 }
-if (!DEMO) startCadenceFeed({ key: CADENCE_FEED_KEY, url: CADENCE_FEED_URL, onInvalidate: coalesceInvalidations(invalidate), onStatus: (st) => { feedStatus = st; console.log(`cadence feed: ${st.state}${st.detail ? ` (${st.detail})` : ""}`); broadcast("feed", st); } });
+if (!DEMO) startCadenceFeed({ key: CADENCE_FEED_KEY, url: CADENCE_FEED_URL, onInvalidate: coalesceInvalidations(invalidate), onStatus: (st) => { feedStatus = st; console.log(`cadence feed: ${st.state}${st.detail ? ` (${st.detail})` : ""}`); streams.broadcast("feed", st); } });
 
 // ---------- background warm for every known token ----------
 let warming = false;
@@ -311,7 +300,7 @@ const server = http.createServer(async (req, res) => {
       if (url.pathname === "/api/repos") return send(res, 200, { repos: demoRepos });
       if (url.pathname === "/api/quota") return send(res, 200, demoQuota());
       if (url.pathname === "/api/upstream") return send(res, 200, demoUpstream());
-      if (url.pathname === "/api/events") return openBrowserStream(req, res, "octocat");
+      if (url.pathname === "/api/events") return streams.open(req, res, { login: "octocat", owner: true });
       if (url.pathname === "/api/daily") {
         const to = url.searchParams.get("to") || today(), from = url.searchParams.get("from") || to, days = daysBetween(from, to);
         return send(res, 200, { user: "octocat", from, to, today: today(), days, metrics: demoDaily(days, today()) });
@@ -357,7 +346,7 @@ const server = http.createServer(async (req, res) => {
       const c = client(s.token);
       if (url.pathname === "/api/live" && url.searchParams.get("saved") === "1") return send(res, 200, lastLive(s.token) || { none: true });
       if (url.pathname === "/api/live") return send(res, 200, await liveData(c, s.token));
-      if (url.pathname === "/api/events") return openBrowserStream(req, res, await c.me());
+      if (url.pathname === "/api/events") return streams.open(req, res, { login: await c.me(), owner: Boolean(s.owner) });
       if (url.pathname === "/api/me") return send(res, 200, { login: await c.me(), owner: Boolean(s.owner) });
       if (url.pathname === "/api/repos") return send(res, 200, { repos: s.owner ? await localRepos.list() : [] });
       if (url.pathname === "/api/quota") return send(res, 200, s.owner ? await readQuota(claudeQuota, codexAccounts, url.searchParams.get("force") === "1", listAuthDir(AUTH_DIR)) : { available: false });
