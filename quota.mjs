@@ -62,3 +62,12 @@ export function createClaudeQuota({ usageCache, authDir, cpaRoute, run = runRank
     },
   };
 }
+
+export async function readQuota(claudeQuota, codexAccounts, force) {
+  if (!claudeQuota.read(force)) return { available: false };
+  const codex = await codexAccounts(force);
+  // A ranking run that ended during the Codex fetch has already told pages to reload; a snapshot from before it would land after theirs.
+  const claude = claudeQuota.read(false);
+  if (!claude) return { available: false };
+  return { available: true, fetched_at: claude.fetched_at, refreshing: claude.refreshing, accounts: [...claude.accounts, ...codex] };
+}

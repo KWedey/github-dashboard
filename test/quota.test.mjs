@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { QUOTA_STALE_MS, createClaudeQuota } from "../quota.mjs";
+import { QUOTA_STALE_MS, createClaudeQuota, readQuota } from "../quota.mjs";
 
 const NOW = Date.parse("2026-10-28T12:00:00Z");
 const LIVE = "claude-1a2b3c4d-octocat@acme.com.json", RETIRED = "claude-5e6f7a8b-octocat@acme.com.json";
@@ -139,4 +139,22 @@ test("a cache file holding no object reads as unavailable", () => {
   fs.writeFileSync(usageCache, "null");
   assert.equal(quota.read(false), null);
   assert.equal(runs.length, 0);
+});
+
+test("a quota read reports the Claude state after its Codex fetch, not before it", async () => {
+  const { quota, runs } = setup({ [LIVE]: entry(20) });
+  quota.read(false);
+  const codex = { file: "codex-7e8f9a0b-octocat@acme.com.json", provider: "codex" };
+  const read = await readQuota(quota, async () => { runs[0](); return [codex]; }, false);
+  assert.equal(read.refreshing, false);
+  assert.deepEqual(read.accounts.map((a) => a.file), [LIVE, codex.file]);
+  assert.equal(runs.length, 1);
+});
+
+test("a quota read with no Claude cache skips the Codex fetch", async () => {
+  const { quota, usageCache } = setup({});
+  fs.rmSync(usageCache);
+  let codexCalls = 0;
+  assert.deepEqual(await readQuota(quota, async () => { codexCalls++; return []; }, true), { available: false });
+  assert.equal(codexCalls, 0);
 });

@@ -13,7 +13,7 @@ import { createActivity, invalidateDays, API, daysBetween, shift, today } from "
 import { DEFAULT_FEED_URL, coalesceInvalidations, startCadenceFeed } from "./cadence-feed.mjs";
 import { latestLabelTimes } from "./label-times.mjs";
 import { compareFork, githubSlug } from "./upstream-drift.mjs";
-import { createClaudeQuota, quotaWindow } from "./quota.mjs";
+import { createClaudeQuota, quotaWindow, readQuota } from "./quota.mjs";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const untilde = (p) => p.replace(/^~/, process.env.HOME);
@@ -224,11 +224,6 @@ async function codexAccounts(force) {
   let files; try { files = fs.readdirSync(AUTH_DIR).filter((f) => f.startsWith("codex-") && f.endsWith(".json")); } catch { return []; }
   return (await Promise.all(files.map((f) => codexAccount(f, force)))).filter(Boolean);
 }
-async function quotaData(force) {
-  const claude = claudeQuota.read(force);
-  if (!claude) return { available: false };
-  return { available: true, fetched_at: claude.fetched_at, refreshing: claude.refreshing, accounts: [...claude.accounts, ...(await codexAccounts(force))] };
-}
 
 // ---------- upstream drift of this dashboard's own repo ----------
 // The ceiling stops git climbing into a parent repo when this folder is not a checkout of its own.
@@ -364,7 +359,7 @@ const server = http.createServer(async (req, res) => {
       if (url.pathname === "/api/events") return openBrowserStream(req, res, await c.me());
       if (url.pathname === "/api/me") return send(res, 200, { login: await c.me(), owner: Boolean(s.owner) });
       if (url.pathname === "/api/repos") return send(res, 200, { repos: s.owner ? await localRepos.list() : [] });
-      if (url.pathname === "/api/quota") return send(res, 200, s.owner ? await quotaData(url.searchParams.get("force") === "1") : { available: false });
+      if (url.pathname === "/api/quota") return send(res, 200, s.owner ? await readQuota(claudeQuota, codexAccounts, url.searchParams.get("force") === "1") : { available: false });
       if (url.pathname === "/api/upstream") return send(res, 200, s.owner ? await upstreamDrift(c) : { available: false });
       if (url.pathname === "/api/daily") {
         const to = url.searchParams.get("to") || today(), from = url.searchParams.get("from") || to;
