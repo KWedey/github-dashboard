@@ -16,6 +16,7 @@ import { compareFork, githubSlug } from "./upstream-drift.mjs";
 import { createClaudeQuota, quotaWindow } from "./quota.mjs";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
+const untilde = (p) => p.replace(/^~/, process.env.HOME);
 const { MAX_RANGE_DAYS } = Dates;
 const PORT = Number(process.env.PORT || 4747);
 const HOST = process.env.HOST || "127.0.0.1";
@@ -184,10 +185,10 @@ async function liveData(c, token) {
 }
 
 // ---------- Claude quotas from cpa-route (owner only) ----------
-const AUTH_DIR = (process.env.CPA_AUTH_DIR || "~/.cli-proxy-api").replace(/^~/, process.env.HOME);
+const AUTH_DIR = untilde(process.env.CPA_AUTH_DIR || "~/.cli-proxy-api");
 const claudeQuota = createClaudeQuota({
-  usageCache: (process.env.CPA_USAGE_CACHE || "~/.config/cpa-route/usage-cache.json").replace(/^~/, process.env.HOME),
-  cpaRoute: (process.env.CPA_ROUTE_BIN || "~/.local/bin/cpa-route").replace(/^~/, process.env.HOME),
+  usageCache: untilde(process.env.CPA_USAGE_CACHE || "~/.config/cpa-route/usage-cache.json"),
+  cpaRoute: untilde(process.env.CPA_ROUTE_BIN || "~/.local/bin/cpa-route"),
   authDir: AUTH_DIR,
   onRefreshed: () => broadcast("quota", { at: new Date().toISOString() }),
 });
@@ -248,7 +249,7 @@ function upstreamDrift(c) {
 
 // ---------- local repos (owner only, repos.mjs) ----------
 const localRepos = createRepoScanner({
-  roots: (process.env.REPO_ROOTS || "~,~/Studio").split(",").map((r) => r.trim().replace(/^~/, process.env.HOME)).filter(Boolean),
+  roots: (process.env.REPO_ROOTS || "~,~/Studio").split(",").map((r) => untilde(r.trim())).filter(Boolean),
   skip: new Set([...DEFAULT_SKIP, ...(process.env.REPO_SKIP || "Dropbox (Personal),TrainerRoad Dropbox").split(",").map((x) => x.trim()).filter(Boolean)]),
   file: path.join(CACHE_DIR, "local-repos.json"),
   log: (m) => console.log(m),
