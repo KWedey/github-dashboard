@@ -49,7 +49,7 @@ function cookie(req, name) { const m = (req.headers.cookie || "").match(new RegE
 function sessionFor(req) {
   const sid = cookie(req, "ghdash");
   if (sid && sessions[sid]) return { ...sessions[sid], sid };
-  if (ownerToken && isLoopbackCaller(req.socket.remoteAddress, req.headers.host)) return { token: ownerToken, owner: true };
+  if (ownerToken && isLoopbackCaller(req)) return { token: ownerToken, owner: true };
   return null;
 }
 function newSession(res, token, login) {
@@ -293,7 +293,8 @@ function send(res, code, body, type = "application/json", headers = {}) { res.wr
 function readBody(req) { return new Promise((r) => { let s = ""; req.on("data", (d) => (s += d)).on("end", () => r(s)); }); }
 
 const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+  const url = URL.parse(req.url, "http://localhost");
+  if (!url) return send(res, 400, { error: "bad request" });
   try {
     if (DEMO && url.pathname.startsWith("/api/")) {
       if (url.pathname === "/api/auth/status" || url.pathname === "/api/me") return send(res, 200, { loggedIn: true, login: "octocat", owner: true, deviceFlow: false });
