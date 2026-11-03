@@ -16,6 +16,7 @@ import { latestLabelTimes } from "./label-times.mjs";
 import { compareFork, githubSlug } from "./upstream-drift.mjs";
 import { createClaudeQuota, listAuthDir, quotaWindow, readQuota } from "./quota.mjs";
 import { createStreams, sseFrame } from "./events.mjs";
+import { isLoopbackCaller } from "./loopback.mjs";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const untilde = (p) => p.replace(/^~(?=\/|$)/, () => os.homedir());
@@ -48,8 +49,7 @@ function cookie(req, name) { const m = (req.headers.cookie || "").match(new RegE
 function sessionFor(req) {
   const sid = cookie(req, "ghdash");
   if (sid && sessions[sid]) return { ...sessions[sid], sid };
-  const ip = req.socket.remoteAddress;
-  if (ownerToken && (ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1")) return { token: ownerToken, owner: true };
+  if (ownerToken && isLoopbackCaller(req)) return { token: ownerToken, owner: true };
   return null;
 }
 function newSession(res, token, login) {
@@ -293,7 +293,8 @@ function send(res, code, body, type = "application/json", headers = {}) { res.wr
 function readBody(req) { return new Promise((r) => { let s = ""; req.on("data", (d) => (s += d)).on("end", () => r(s)); }); }
 
 const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+  const url = URL.parse(req.url, "http://localhost");
+  if (!url) return send(res, 400, { error: "bad request" });
   try {
     if (DEMO && url.pathname.startsWith("/api/")) {
       if (url.pathname === "/api/auth/status" || url.pathname === "/api/me") return send(res, 200, { loggedIn: true, login: "octocat", owner: true, deviceFlow: false });
